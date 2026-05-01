@@ -1,0 +1,136 @@
+import { Client, GatewayIntentBits } from "discord.js";
+import { DiscordBotApp } from "./ui/discord/discordBotApp";
+import { DeepAgentRuntime } from "./infrastructure/agent/deepAgentRuntime";
+import { SimpleWebClient } from "./infrastructure/web/simpleWebClient";
+import { loadEnv } from "./config/env";
+import { DiscordJsTransport } from "./infrastructure/discord/discordJsTransport";
+import { createPostgresPool } from "./infrastructure/db/postgresPool";
+import { PostgresKnowledgeRepository } from "./infrastructure/db/postgresKnowledgeRepository";
+import { OllamaEmbeddingProvider } from "./infrastructure/memory/ollamaEmbeddingProvider";
+import {
+  createOllamaChatModel,
+  createOllamaChatModelCloud,
+} from "./infrastructure/agent/ollamaChatModel";
+import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
+import { createCustomTools } from "./infrastructure/agent/customTools";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
+import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
+
+const main = async (): Promise<void> => {
+  const deepagents = await import("deepagents");
+  const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
+    model: unknown;
+    tools: unknown[];
+    systemPrompt: string;
+    checkpointer?: unknown;
+    store?: unknown;
+    backend?: unknown;
+    skills?: string[];
+  }) => {
+    invoke(
+      input: { messages: Array<{ role: "user" | "assistant" | "system"; content: string }> },
+      config?: { configurable?: { thread_id?: string } },
+    ): Promise<{ messages?: unknown[] }>;
+  };
+
+  const env = loadEnv();
+  const identity = {
+    botId: env.botId,
+    systemPrompt: loadSystemPromptByBotId(
+      env.botId,
+      process.env.SYSTEM_PROMPT ?? "You are a helpful Discord assistant.",
+    ),
+  };
+
+  const chatModel = env.ollamaApiKey
+    ? createOllamaChatModelCloud(
+        env.ollamaBaseUrl,
+        env.ollamaChatModel,
+        env.ollamaApiKey,
+      )
+    : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
+
+  const pool = createPostgresPool(env.postgresUrl);
+  const embeddingProvider = new OllamaEmbeddingProvider(
+    env.ollamaEmbeddingBaseUrl,
+    env.ollamaEmbeddingModel,
+  );
+  const repository = new PostgresKnowledgeRepository(
+    pool,
+    embeddingProvider,
+    env.ollamaEmbeddingDimension,
+  );
+  await repository.initialize();
+
+  const userMemoryStore = new PostgresUserMemoryStore(pool);
+  await userMemoryStore.initialize();
+
+  const checkpointer = PostgresSaver.fromConnString(env.postgresUrl);
+  await checkpointer.setup();
+
+  const store = PostgresStore.fromConnString(env.postgresUrl, {
+    index: {
+      dims: env.ollamaEmbeddingDimension,
+      embed: {
+        embedDocuments: (texts: string[]) =>
+          Promise.all(texts.map((text) => embeddingProvider.embed(text))),
+        embedQuery: (text: string) => embeddingProvider.embed(text),
+      },
+    },
+  });
+  await store.setup();
+
+  const webClient = new SimpleWebClient(env.simpleClientBaseUrl);
+  const tools = createCustomTools({
+    knowledgeRepository: repository,
+    webClient,
+    userMemoryStore,
+    defaultUserId: "discord-user",
+    botId: identity.botId,
+  });
+
+  const runtime = new DeepAgentRuntime(
+    chatModel,
+    tools,
+    ({ model, tools: configuredTools, systemPrompt, checkpointer: cp, store: st }) =>
+      createDeepAgent({
+        model,
+        tools: configuredTools,
+        systemPrompt,
+        ...(cp ? { checkpointer: cp } : {}),
+        ...(st ? { store: st } : {}),
+        backend: new deepagents.FilesystemBackend({ rootDir: process.cwd() }),
+        skills: env.deepAgentSkillsSources,
+      }),
+    () => store,
+    () => checkpointer,
+  );
+
+  const discordClient = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+  });
+  const transport = new DiscordJsTransport(discordClient);
+
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    repository,
+    webClient,
+    transport,
+  );
+  app.start();
+
+  await discordClient.login(env.discordToken);
+};
+
+main().catch((error: unknown) => {
+  const message =
+    error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+});

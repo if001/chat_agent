@@ -1,0 +1,7 @@
+/.agent-shell/
+.env
+.env.ao
+.env.aka
+lib/
+docs/
+node_modules/
