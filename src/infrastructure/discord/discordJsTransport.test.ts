@@ -4,7 +4,7 @@ interface HandlerMap {
   messageCreate?: (message: {
     content: string;
     author: { id: string; bot: boolean };
-    channel: { id: string; send(content: string): Promise<void> };
+    channel: { id: string; send(content: string): Promise<void>; sendTyping(): Promise<void> };
     mentions: { has(userId: string): boolean };
   }) => Promise<void> | void;
 }
@@ -22,10 +22,12 @@ test("forwards mention and sends response", async () => {
   const client = new FakeClient();
   const transport = new DiscordJsTransport(client);
   const sent: string[] = [];
+  let typingCount = 0;
 
   transport.onMessage(async (message) => {
     expect(message.mentionsBot).toBe(true);
     await transport.sendMessage(message.channelId, "reply");
+    await transport.sendTyping(message.channelId);
   });
 
   const handler = client.handlers.messageCreate;
@@ -41,9 +43,13 @@ test("forwards mention and sends response", async () => {
       send: async (content: string) => {
         sent.push(content);
       },
+      sendTyping: async () => {
+        typingCount += 1;
+      },
     },
     mentions: { has: (userId: string) => userId === "bot-1" },
   });
 
   expect(sent[0]).toBe("reply");
+  expect(typingCount).toBe(1);
 });

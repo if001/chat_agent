@@ -1,45 +1,127 @@
-import { AgentRuntime, BotIdentity, ChannelMessage, KnowledgeRepository, WebClient } from "../../core/types";
+import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
 import { handleMention } from "../../core/usecases/handleMention";
-import { ingestSharedKnowledge } from "../../core/usecases/ingestSharedKnowledge";
+import { QueueStore, QueueTask } from "../../queue/types";
+import { QueueWorker } from "../../queue/queueWorker";
 
 export interface DiscordTransport {
   onMessage(handler: (message: ChannelMessage) => Promise<void>): void;
   sendMessage(channelId: string, content: string): Promise<void>;
+  sendTyping(channelId: string): Promise<void>;
 }
 
-const URL_PATTERN = /(https?:\/\/[^\s]+)/gi;
-
 export class DiscordBotApp {
+  private readonly queueStore: QueueStore;
+  private readonly worker: QueueWorker;
+
   constructor(
     private readonly identity: BotIdentity,
     private readonly runtime: AgentRuntime,
-    private readonly repository: KnowledgeRepository,
-    private readonly webClient: WebClient,
     private readonly transport: DiscordTransport,
-  ) {}
+    private readonly mentionChannelId: string,
+    queue?: QueueStore,
+  ) {
+    this.queueStore = queue ?? createInlineQueue();
+    this.worker = new QueueWorker(this.queueStore, (task) => this.processTask(task), 1_000);
+  }
 
   start(): void {
+    this.worker.start();
     this.transport.onMessage(async (message) => {
-      const mentionReply = await handleMention(this.identity, this.runtime, message);
-      if (mentionReply) {
-        await this.transport.sendMessage(message.channelId, mentionReply);
-      }
-
-      const urls = message.content.match(URL_PATTERN) ?? [];
-      for (const url of urls) {
-        const saved = await ingestSharedKnowledge(
-          this.identity,
-          this.runtime,
-          this.repository,
-          this.webClient,
-          url,
-          `${message.channelId}:url`,
-        );
-        await this.transport.sendMessage(
-          message.channelId,
-          `保存しました: ${saved.title}\n要約: ${saved.summary}\narticleId: ${saved.articleId}`,
-        );
+      if (message.channelId === this.mentionChannelId) {
+        await this.enqueueUserTask(message.content, message);
       }
     });
   }
+
+  private async enqueueUserTask(text: string, message: ChannelMessage): Promise<void> {
+    await this.queueStore.enqueue({
+      type: "user",
+      action: "mention",
+      text,
+      channelId: message.channelId,
+      authorId: message.authorId,
+      mentionsBot: message.mentionsBot,
+      dueAt: new Date(),
+    });
+    await this.worker.tick(new Date());
+  }
+
+  private async processTask(task: QueueTask): Promise<void> {
+    if (task.action === "mention") {
+      await this.transport.sendTyping(task.channelId);
+      const mentionReply = await handleMention(this.identity, this.runtime, {
+        channelId: task.channelId,
+        authorId: task.authorId,
+        content: task.text,
+        mentionsBot: task.mentionsBot,
+      });
+      if (mentionReply) {
+        await this.transport.sendMessage(task.channelId, mentionReply);
+      }
+      return;
+    }
+
+    if (task.action === "agent_input") {
+      await this.transport.sendTyping(task.channelId);
+      const result = await this.runtime.respond({
+        botId: this.identity.botId,
+        systemPrompt: this.identity.systemPrompt,
+        threadId: `${task.channelId}:scheduled`,
+        messages: [{ role: "user", content: task.text }],
+      });
+      if (result.content.length > 0) {
+        await this.transport.sendMessage(task.channelId, result.content);
+      }
+    }
+  }
 }
+
+const createInlineQueue = (): QueueStore => {
+  const items: QueueTask[] = [];
+  return {
+    enqueue: async (input) => {
+      const task: QueueTask = {
+        id: `inline_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        type: input.type,
+        action: input.action,
+        text: input.text,
+        channelId: input.channelId,
+        authorId: input.authorId,
+        mentionsBot: input.mentionsBot,
+        dueAt: input.dueAt.toISOString(),
+        ...(input.intervalMinutes ? { intervalMinutes: input.intervalMinutes } : {}),
+        createdAt: new Date().toISOString(),
+        locked: false,
+      };
+      items.push(task);
+      return task;
+    },
+    dequeueReady: async (now) => {
+      const idx = items.findIndex((it) => !it.locked && new Date(it.dueAt).getTime() <= now.getTime());
+      if (idx < 0) {
+        return null;
+      }
+      const current = items[idx];
+      if (!current) {
+        return null;
+      }
+      items[idx] = { ...current, locked: true };
+      return items[idx] ?? null;
+    },
+    ack: async (id) => {
+      const idx = items.findIndex((it) => it.id === id);
+      if (idx >= 0) {
+        items.splice(idx, 1);
+      }
+    },
+    release: async (id) => {
+      const idx = items.findIndex((it) => it.id === id);
+      if (idx >= 0) {
+        const current = items[idx];
+        if (current) {
+          items[idx] = { ...current, locked: false };
+        }
+      }
+    },
+  };
+};

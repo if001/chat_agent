@@ -4,6 +4,7 @@ import { DiscordTransport } from "../../ui/discord/discordBotApp";
 interface DiscordTextChannel {
   id: string;
   send(content: string): Promise<void>;
+  sendTyping(): Promise<void>;
 }
 
 interface DiscordMessage {
@@ -48,5 +49,13 @@ export class DiscordJsTransport implements DiscordTransport {
       throw new Error(`Unknown channel id: ${channelId}`);
     }
     await channel.send(content);
+  }
+
+  async sendTyping(channelId: string): Promise<void> {
+    const channel = this.channelMap.get(channelId);
+    if (!channel) {
+      throw new Error(`Unknown channel id: ${channelId}`);
+    }
+    await channel.sendTyping();
   }
 }

@@ -40,11 +40,12 @@ const mentionBlock = () => {
 };
 const lastBlock =
   "あなたの仕事は、曖昧さを減らし、比較・分解・検討を通じて、次の判断に使える材料を返すことです。";
+const nowIso = (): string => new Date().toISOString();
 
 export const getAoSystemPrompt = (): string =>
   `
-${first_block}
-現在時刻: ${now_iso()}
+${firstBlock}
+現在時刻: ${nowIso()}
 ${policy}
 ## ツールの方針
 - 複数回ツールを使うことができます。
@@ -58,5 +59,5 @@ ${policy}
 - [重要] 人格/性格を必ず守り出力を作成してください。
 
 ### 協力者
-${mentionBlock}
+${mentionBlock()}
 ${lastBlock}`.trim();

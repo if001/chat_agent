@@ -1,9 +1,13 @@
 import { config } from "dotenv";
 
-config();
+if (!process.env.DISCORD_BOT_TOKEN && !process.env.POSTGRES_URL) {
+  config();
+}
 
 export interface AppEnv {
   botId: string;
+  mentionChannelId: string;
+  ingestChannelId?: string;
   discordToken: string;
   simpleClientBaseUrl: string;
   postgresUrl: string;
@@ -14,6 +18,7 @@ export interface AppEnv {
   ollamaEmbeddingModel: string;
   ollamaEmbeddingDimension: number;
   deepAgentSkillsSources: string[];
+  queueDir: string;
 }
 
 const required = (name: string): string => {
@@ -23,20 +28,31 @@ const required = (name: string): string => {
   }
   return value;
 };
-
 export const loadEnv = (): AppEnv => ({
   botId: process.env.BOT_ID ?? "ao",
+  mentionChannelId: required("MENTION_CHANNEL_ID"),
+  ...(process.env.INGEST_CHANNEL_ID
+    ? { ingestChannelId: process.env.INGEST_CHANNEL_ID }
+    : {}),
   discordToken: required("DISCORD_BOT_TOKEN"),
   simpleClientBaseUrl: required("SIMPLE_CLIENT_BASE_URL"),
   postgresUrl: required("POSTGRES_URL"),
   ollamaBaseUrl: required("OLLAMA_BASE_URL"),
-  ...(process.env.OLLAMA_API_KEY ? { ollamaApiKey: process.env.OLLAMA_API_KEY } : {}),
-  ollamaEmbeddingBaseUrl: process.env.OLLAMA_EMBEDDING_BASE_URL ?? required("OLLAMA_BASE_URL"),
+  ...(process.env.OLLAMA_API_KEY
+    ? { ollamaApiKey: process.env.OLLAMA_API_KEY }
+    : {}),
+  ollamaEmbeddingBaseUrl:
+    process.env.OLLAMA_EMBEDDING_BASE_URL ?? required("OLLAMA_BASE_URL"),
   ollamaChatModel: required("OLLAMA_CHAT_MODEL"),
   ollamaEmbeddingModel: required("OLLAMA_EMBEDDING_MODEL"),
-  ollamaEmbeddingDimension: Number(process.env.OLLAMA_EMBEDDING_DIMENSION ?? "1024"),
-  deepAgentSkillsSources: (process.env.DEEPAGENT_SKILLS_SOURCES ?? "/src/skills/")
+  ollamaEmbeddingDimension: Number(
+    process.env.OLLAMA_EMBEDDING_DIMENSION ?? "1024",
+  ),
+  deepAgentSkillsSources: (
+    process.env.DEEPAGENT_SKILLS_SOURCES ?? "/src/skills/"
+  )
     .split(",")
     .map((v) => v.trim())
     .filter((v) => v.length > 0),
+  queueDir: process.env.QUEUE_DIR ?? "data/queues",
 });

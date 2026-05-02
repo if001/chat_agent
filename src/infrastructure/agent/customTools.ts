@@ -8,6 +8,13 @@ export interface CustomToolDeps {
   userMemoryStore: UserMemoryStore;
   defaultUserId: string;
   botId: string;
+  enqueueTask?: (input: {
+    text: string;
+    delayMinutes?: number;
+    everyMinutes?: number;
+    atIso?: string;
+  }) => Promise<{ id: string; dueAt: string; type: "scheduled_once" | "scheduled_recurring" }>;
+  getQueueStatus?: (input?: { limit?: number }) => Promise<unknown>;
 }
 
 const schemaCompat = <T>(schema: T): T => schema;
@@ -167,6 +174,53 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
   );
 
+  const enqueueTaskTool = tool(
+    async ({ text, delayMinutes, everyMinutes, atIso }: { text: string; delayMinutes?: number; everyMinutes?: number; atIso?: string }) => {
+      if (!deps.enqueueTask) {
+        return JSON.stringify({ error: "queue backend is not configured" });
+      }
+      const created = await deps.enqueueTask({
+        text,
+        ...(delayMinutes !== undefined ? { delayMinutes } : {}),
+        ...(everyMinutes !== undefined ? { everyMinutes } : {}),
+        ...(atIso !== undefined ? { atIso } : {}),
+      });
+      return JSON.stringify({
+        ok: true,
+        message: `queueを作成しました: id=${created.id}, dueAt=${created.dueAt}, type=${created.type}`,
+      });
+    },
+    {
+      name: "enqueue_task",
+      description: "Schedules a future task for the agent queue.",
+      schema: schemaCompat(z.object({
+        text: z.string(),
+        delayMinutes: z.number().int().min(1).optional(),
+        everyMinutes: z.number().int().min(1).optional(),
+        atIso: z.string().optional(),
+      })) as never,
+    },
+  );
+
+  const getQueueStatusTool = tool(
+    async ({ limit }: { limit?: number }) => {
+      if (!deps.getQueueStatus) {
+        return JSON.stringify({ error: "queue backend is not configured" });
+      }
+      const status = await deps.getQueueStatus(
+        limit !== undefined ? { limit } : undefined,
+      );
+      return JSON.stringify(status);
+    },
+    {
+      name: "get_queue_status",
+      description: "Returns current queue status (counts and upcoming tasks).",
+      schema: schemaCompat(z.object({
+        limit: z.number().int().min(0).max(20).default(5).optional(),
+      })) as never,
+    },
+  );
+
   return [
     webListTool,
     webPageTool,
@@ -176,6 +230,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     rememberUserNoteTool,
     getUserNotesTool,
     readMemoryFileTool,
+    enqueueTaskTool,
+    getQueueStatusTool,
   ];
 };
 

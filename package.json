@@ -7,9 +7,12 @@
     "dev": "tsx watch src/index.ts",
     "start:terminal": "tsx --env-file=.env.ao src/runTerminal.ts",
     "start:discord": "tsx --env-file=.env.ao src/runDiscord.ts",
+    "start:ingest": "tsx --env-file=.env.ao src/runIngest.ts",
     "build": "tsc -p .",
     "build:live": "nodemon --watch 'src/**/*.ts' --exec \"ts-node\" src/index.ts",
-    "test": "jest"
+    "test": "jest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
   },
   "keywords": [],
   "author": "",
@@ -30,6 +33,8 @@
     "deepagents": "^1.7.0",
     "discord.js": "^14.21.0",
     "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
     "pg": "^8.16.3"
   }
 }

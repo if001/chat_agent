@@ -213,3 +213,42 @@ test("get_user_notes returns remembered notes", async () => {
   const parsed = JSON.parse(result as string) as Array<{ note: string }>;
   expect(parsed[0]?.note).toBe("prefer concise");
 });
+
+test("enqueue_task returns queue created message", async () => {
+  const tools = createCustomTools({
+    knowledgeRepository: new KnowledgeRepoStub(),
+    webClient: new WebClientStub(),
+    userMemoryStore: new MemoryStoreStub(),
+    defaultUserId: "u1",
+    botId: "b1",
+    enqueueTask: async ({ text }) => ({
+      id: `t_${text.length}`,
+      dueAt: new Date("2026-01-01T01:00:00.000Z").toISOString(),
+      type: "scheduled_once",
+    }),
+  });
+
+  const result = await findTool(tools, "enqueue_task").invoke({
+    text: "follow up in 1 hour",
+    delayMinutes: 60,
+  });
+  const parsed = JSON.parse(result as string) as { ok: boolean; message: string };
+  expect(parsed.ok).toBe(true);
+  expect(parsed.message).toContain("queueを作成しました");
+});
+
+test("get_queue_status returns status payload", async () => {
+  const tools = createCustomTools({
+    knowledgeRepository: new KnowledgeRepoStub(),
+    webClient: new WebClientStub(),
+    userMemoryStore: new MemoryStoreStub(),
+    defaultUserId: "u1",
+    botId: "b1",
+    getQueueStatus: async ({ limit } = {}) => ({ counts: { total: 3 }, next: new Array(limit ?? 5).fill({}) }),
+  });
+
+  const result = await findTool(tools, "get_queue_status").invoke({ limit: 2 });
+  const parsed = JSON.parse(result as string) as { counts: { total: number }; next: unknown[] };
+  expect(parsed.counts.total).toBe(3);
+  expect(parsed.next.length).toBe(2);
+});

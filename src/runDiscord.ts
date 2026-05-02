@@ -5,6 +5,7 @@ import { SimpleWebClient } from "./infrastructure/web/simpleWebClient";
 import { loadEnv } from "./config/env";
 import { DiscordJsTransport } from "./infrastructure/discord/discordJsTransport";
 import { createPostgresPool } from "./infrastructure/db/postgresPool";
+import { createDrizzleClient } from "./infrastructure/db/drizzleClient";
 import { PostgresKnowledgeRepository } from "./infrastructure/db/postgresKnowledgeRepository";
 import { OllamaEmbeddingProvider } from "./infrastructure/memory/ollamaEmbeddingProvider";
 import {
@@ -16,6 +17,8 @@ import { createCustomTools } from "./infrastructure/agent/customTools";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
+import { FileQueueStore } from "./queue/fileQueueStore";
+import { join } from "node:path";
 
 const main = async (): Promise<void> => {
   const deepagents = await import("deepagents");
@@ -52,19 +55,14 @@ const main = async (): Promise<void> => {
     : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
 
   const pool = createPostgresPool(env.postgresUrl);
+  const db = createDrizzleClient(pool);
   const embeddingProvider = new OllamaEmbeddingProvider(
     env.ollamaEmbeddingBaseUrl,
     env.ollamaEmbeddingModel,
   );
-  const repository = new PostgresKnowledgeRepository(
-    pool,
-    embeddingProvider,
-    env.ollamaEmbeddingDimension,
-  );
-  await repository.initialize();
+  const repository = new PostgresKnowledgeRepository(db, embeddingProvider);
 
-  const userMemoryStore = new PostgresUserMemoryStore(pool);
-  await userMemoryStore.initialize();
+  const userMemoryStore = new PostgresUserMemoryStore(db);
 
   const checkpointer = PostgresSaver.fromConnString(env.postgresUrl);
   await checkpointer.setup();
@@ -82,12 +80,31 @@ const main = async (): Promise<void> => {
   await store.setup();
 
   const webClient = new SimpleWebClient(env.simpleClientBaseUrl);
+  const queueStore = new FileQueueStore(join(env.queueDir, `${identity.botId}.json`));
   const tools = createCustomTools({
     knowledgeRepository: repository,
     webClient,
     userMemoryStore,
     defaultUserId: "discord-user",
     botId: identity.botId,
+    enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
+      const dueAt = atIso
+        ? new Date(atIso)
+        : new Date(Date.now() + (delayMinutes ?? everyMinutes ?? 60) * 60 * 1000);
+      const type = everyMinutes ? "scheduled_recurring" : "scheduled_once";
+      const task = await queueStore.enqueue({
+        type,
+        action: "agent_input",
+        text,
+        channelId: env.mentionChannelId,
+        authorId: "agent",
+        mentionsBot: false,
+        dueAt,
+        ...(everyMinutes ? { intervalMinutes: everyMinutes } : {}),
+      });
+      return { id: task.id, dueAt: task.dueAt, type };
+    },
+    getQueueStatus: async ({ limit } = {}) => queueStore.getStatus(new Date(), limit ?? 5),
   });
 
   const runtime = new DeepAgentRuntime(
@@ -119,9 +136,9 @@ const main = async (): Promise<void> => {
   const app = new DiscordBotApp(
     identity,
     runtime,
-    repository,
-    webClient,
     transport,
+    env.mentionChannelId,
+    queueStore,
   );
   app.start();
 

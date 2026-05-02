@@ -1,6 +1,8 @@
 export { TerminalChatApp } from "./ui/terminal/terminalChatApp";
 export { DiscordBotApp } from "./ui/discord/discordBotApp";
+export { DiscordIngestApp } from "./ui/discord/discordIngestApp";
 export { DeepAgentRuntime } from "./infrastructure/agent/deepAgentRuntime";
+export { SimpleChatRuntime } from "./infrastructure/agent/simpleChatRuntime";
 export { InMemoryKnowledgeRepository } from "./infrastructure/knowledge/inMemoryKnowledgeRepository";
 export { PostgresKnowledgeRepository } from "./infrastructure/db/postgresKnowledgeRepository";
 export { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
