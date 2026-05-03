@@ -12,6 +12,7 @@ export class DiscordIngestApp {
     private readonly webClient: WebClient,
     private readonly transport: DiscordTransport,
     private readonly ingestChannelId: string,
+    private readonly logger: (message: string) => void = console.log,
   ) {}
 
   start(): void {
@@ -22,7 +23,19 @@ export class DiscordIngestApp {
 
       const urls = message.content.match(URL_PATTERN) ?? [];
       for (const url of urls) {
-        await this.processUrl(message, url);
+        try {
+          await this.processUrl(message, url);
+        } catch (error: unknown) {
+          const detail =
+            error instanceof Error ? error.stack ?? error.message : String(error);
+          this.logger(
+            `[ingest-error] channel=${message.channelId} url=${url}\n${detail}`,
+          );
+          await this.transport.sendMessage(
+            message.channelId,
+            `URLの取り込み中にエラーが発生しました: ${url}`,
+          );
+        }
       }
     });
   }

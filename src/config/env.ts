@@ -11,6 +11,7 @@ export interface AppEnv {
   discordToken: string;
   simpleClientBaseUrl: string;
   postgresUrl: string;
+  adminPostgresUrl?: string;
   ollamaBaseUrl: string;
   ollamaApiKey?: string;
   ollamaEmbeddingBaseUrl: string;
@@ -37,6 +38,9 @@ export const loadEnv = (): AppEnv => ({
   discordToken: required("DISCORD_BOT_TOKEN"),
   simpleClientBaseUrl: required("SIMPLE_CLIENT_BASE_URL"),
   postgresUrl: required("POSTGRES_URL"),
+  ...(process.env.ADMIN_POSTGRES_URL
+    ? { adminPostgresUrl: process.env.ADMIN_POSTGRES_URL }
+    : {}),
   ollamaBaseUrl: required("OLLAMA_BASE_URL"),
   ...(process.env.OLLAMA_API_KEY
     ? { ollamaApiKey: process.env.OLLAMA_API_KEY }

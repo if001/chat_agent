@@ -3,7 +3,13 @@ import { AgentRuntime, BotIdentity, KnowledgeRepository, SavedArticle, WebClient
 
 class RuntimeStub implements AgentRuntime {
   async respond(): Promise<{ content: string }> {
-    return { content: "short summary" };
+    return {
+      content: JSON.stringify({
+        summary: "short summary",
+        content: "article content digest",
+        tags: ["langchain", "agents"],
+      }),
+    };
   }
 }
 
@@ -22,7 +28,10 @@ class WebClientStub implements WebClient {
 }
 
 class RepoStub implements KnowledgeRepository {
+  public savedInput: Omit<SavedArticle, "id" | "createdAt"> | null = null;
+
   async saveArticle(article: Omit<SavedArticle, "id" | "createdAt">): Promise<SavedArticle> {
+    this.savedInput = article;
     return {
       ...article,
       id: "a1",
@@ -49,10 +58,11 @@ const identity: BotIdentity = {
 };
 
 test("fetches page, summarizes, and stores shared knowledge", async () => {
+  const repository = new RepoStub();
   const result = await ingestSharedKnowledge(
     identity,
     new RuntimeStub(),
-    new RepoStub(),
+    repository,
     new WebClientStub(),
     "https://example.com/post",
   );
@@ -62,4 +72,6 @@ test("fetches page, summarizes, and stores shared knowledge", async () => {
     title: "Article Title",
     summary: "short summary",
   });
+  expect(repository.savedInput?.content).toBe("article content digest");
+  expect(repository.savedInput?.tags).toEqual(["langchain", "agents"]);
 });

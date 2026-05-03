@@ -1,6 +1,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod/v3";
 import { KnowledgeRepository, UserMemoryStore, WebClient } from "../../core/types";
+import { ArticleAnalysis } from "../../core/usecases/analyzeArticle";
 
 export interface CustomToolDeps {
   knowledgeRepository: KnowledgeRepository;
@@ -15,6 +16,7 @@ export interface CustomToolDeps {
     atIso?: string;
   }) => Promise<{ id: string; dueAt: string; type: "scheduled_once" | "scheduled_recurring" }>;
   getQueueStatus?: (input?: { limit?: number }) => Promise<unknown>;
+  analyzeArticle?: (input: { title: string; url: string; markdown: string }) => Promise<ArticleAnalysis>;
 }
 
 const schemaCompat = <T>(schema: T): T => schema;
@@ -87,6 +89,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
         url: article.url,
         title: article.title,
         summary: article.summary,
+        content: article.content,
+        tags: article.tags,
         createdAt: article.createdAt,
       });
     },
@@ -104,16 +108,30 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   const saveWebKnowledgeTool = tool(
     async ({ url }: { url: string }) => {
       const page = await deps.webClient.webPage(url);
+      const analysis = deps.analyzeArticle
+        ? await deps.analyzeArticle({
+            title: page.title,
+            url: page.url,
+            markdown: page.markdown,
+          })
+        : {
+            summary: summarizeMarkdown(page.markdown),
+            content: summarizeMarkdown(page.markdown),
+            tags: [] as string[],
+          };
       const saved = await deps.knowledgeRepository.saveArticle({
         url: page.url,
         title: page.title,
-        summary: summarizeMarkdown(page.markdown),
+        summary: analysis.summary,
+        content: analysis.content,
+        tags: analysis.tags,
         rawMarkdown: page.markdown,
       });
       return JSON.stringify({
         articleId: saved.id,
         title: saved.title,
         summary: saved.summary,
+        tags: saved.tags,
         url: saved.url,
       });
     },

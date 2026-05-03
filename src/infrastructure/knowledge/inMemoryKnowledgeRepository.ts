@@ -11,6 +11,8 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
         ...existing,
         title: article.title,
         summary: article.summary,
+        content: article.content,
+        tags: article.tags,
         rawMarkdown: article.rawMarkdown,
       };
       this.byId.set(existing.id, updated);
@@ -39,7 +41,7 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
   async searchSavedKnowledge(query: string, options?: SearchKnowledgeOptions): Promise<SearchResultItem[]> {
     const lowered = query.toLowerCase();
     const items = Array.from(this.byId.values()).filter((v) => {
-      const haystack = `${v.title}\n${v.summary}\n${v.rawMarkdown}`.toLowerCase();
+      const haystack = `${v.title}\n${v.summary}\n${v.content}\n${v.tags.join(" ")}`.toLowerCase();
       return haystack.includes(lowered);
     });
 
@@ -48,6 +50,7 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
       score: 1 / (index + 1),
       title: v.title,
       summary: v.summary,
+      tags: v.tags,
       url: v.url,
     }));
     const minScore = options?.minScore ?? 0;

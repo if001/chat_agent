@@ -1,19 +1,24 @@
-import { bigserial, customType, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-
-const vector = customType<{ data: string }>({
-  dataType() {
-    return "vector";
-  },
-});
+import {
+  bigserial,
+  customType,
+  pgTable,
+  text,
+  timestamp,
+  vector,
+} from "drizzle-orm/pg-core";
 
 export const articlesTable = pgTable("articles", {
   id: text("id").primaryKey(),
   url: text("url").notNull().unique(),
   title: text("title").notNull(),
   summary: text("summary").notNull(),
+  content: text("content").notNull(),
+  tags: text("tags").array().notNull(),
   rawMarkdown: text("raw_markdown").notNull(),
-  embedding: vector("embedding"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  embedding: vector("embedding", { dimensions: 768 }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const userNotesTable = pgTable("user_notes", {
@@ -21,5 +26,7 @@ export const userNotesTable = pgTable("user_notes", {
   botId: text("bot_id").notNull(),
   userId: text("user_id").notNull(),
   note: text("note").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });

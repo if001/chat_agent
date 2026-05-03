@@ -25,6 +25,8 @@ export interface SavedArticle {
   url: string;
   title: string;
   summary: string;
+  content: string;
+  tags: string[];
   rawMarkdown: string;
   createdAt: Date;
 }
@@ -34,6 +36,7 @@ export interface SearchResultItem {
   score: number;
   title: string;
   summary: string;
+  tags: string[];
   url: string;
 }
 

@@ -12,7 +12,8 @@
     "build:live": "nodemon --watch 'src/**/*.ts' --exec \"ts-node\" src/index.ts",
     "test": "jest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "start:setup-memory": "tsx --env-file=.env.ao src/runSetupMemory.ts"
   },
   "keywords": [],
   "author": "",

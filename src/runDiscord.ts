@@ -12,6 +12,7 @@ import {
   createOllamaChatModel,
   createOllamaChatModelCloud,
 } from "./infrastructure/agent/ollamaChatModel";
+import { SimpleChatRuntime } from "./infrastructure/agent/simpleChatRuntime";
 import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
@@ -19,6 +20,7 @@ import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { FileQueueStore } from "./queue/fileQueueStore";
 import { join } from "node:path";
+import { analyzeArticle } from "./core/usecases/analyzeArticle";
 
 const main = async (): Promise<void> => {
   const deepagents = await import("deepagents");
@@ -32,7 +34,12 @@ const main = async (): Promise<void> => {
     skills?: string[];
   }) => {
     invoke(
-      input: { messages: Array<{ role: "user" | "assistant" | "system"; content: string }> },
+      input: {
+        messages: Array<{
+          role: "user" | "assistant" | "system";
+          content: string;
+        }>;
+      },
       config?: { configurable?: { thread_id?: string } },
     ): Promise<{ messages?: unknown[] }>;
   };
@@ -53,6 +60,7 @@ const main = async (): Promise<void> => {
         env.ollamaApiKey,
       )
     : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
+  const articleAnalyzerRuntime = new SimpleChatRuntime(chatModel);
 
   const pool = createPostgresPool(env.postgresUrl);
   const db = createDrizzleClient(pool);
@@ -64,8 +72,9 @@ const main = async (): Promise<void> => {
 
   const userMemoryStore = new PostgresUserMemoryStore(db);
 
-  const checkpointer = PostgresSaver.fromConnString(env.postgresUrl);
-  await checkpointer.setup();
+  const checkpointer = PostgresSaver.fromConnString(env.postgresUrl, {
+    schema: "app",
+  });
 
   const store = PostgresStore.fromConnString(env.postgresUrl, {
     index: {
@@ -76,11 +85,14 @@ const main = async (): Promise<void> => {
         embedQuery: (text: string) => embeddingProvider.embed(text),
       },
     },
+    schema: "app",
+    ensureTables: false,
   });
-  await store.setup();
 
   const webClient = new SimpleWebClient(env.simpleClientBaseUrl);
-  const queueStore = new FileQueueStore(join(env.queueDir, `${identity.botId}.json`));
+  const queueStore = new FileQueueStore(
+    join(env.queueDir, `${identity.botId}.json`),
+  );
   const tools = createCustomTools({
     knowledgeRepository: repository,
     webClient,
@@ -90,7 +102,9 @@ const main = async (): Promise<void> => {
     enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
       const dueAt = atIso
         ? new Date(atIso)
-        : new Date(Date.now() + (delayMinutes ?? everyMinutes ?? 60) * 60 * 1000);
+        : new Date(
+            Date.now() + (delayMinutes ?? everyMinutes ?? 60) * 60 * 1000,
+          );
       const type = everyMinutes ? "scheduled_recurring" : "scheduled_once";
       const task = await queueStore.enqueue({
         type,
@@ -104,13 +118,28 @@ const main = async (): Promise<void> => {
       });
       return { id: task.id, dueAt: task.dueAt, type };
     },
-    getQueueStatus: async ({ limit } = {}) => queueStore.getStatus(new Date(), limit ?? 5),
+    getQueueStatus: async ({ limit } = {}) =>
+      queueStore.getStatus(new Date(), limit ?? 5),
+    analyzeArticle: async ({ title, url, markdown }) =>
+      analyzeArticle(
+        articleAnalyzerRuntime,
+        identity.botId,
+        title,
+        url,
+        markdown,
+      ),
   });
 
   const runtime = new DeepAgentRuntime(
     chatModel,
     tools,
-    ({ model, tools: configuredTools, systemPrompt, checkpointer: cp, store: st }) =>
+    ({
+      model,
+      tools: configuredTools,
+      systemPrompt,
+      checkpointer: cp,
+      store: st,
+    }) =>
       createDeepAgent({
         model,
         tools: configuredTools,

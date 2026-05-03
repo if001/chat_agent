@@ -12,6 +12,7 @@ interface SearchRow {
   url: string;
   title: string;
   summary: string;
+  tags: string[];
   score: number;
 }
 
@@ -22,19 +23,40 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
   ) {}
 
   async saveArticle(article: Omit<SavedArticle, "id" | "createdAt">): Promise<SavedArticle> {
-    const embedding = await this.embeddingProvider.embed(`${article.title}\n${article.summary}\n${article.rawMarkdown}`);
+    const embedding = await this.embeddingProvider.embed(
+      [article.title, article.summary, article.tags.join(", ")].join("\n"),
+    );
     const id = `article_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
     const result = await this.db.execute(
       sql`
-      INSERT INTO articles (id, url, title, summary, raw_markdown, embedding)
-      VALUES (${id}, ${article.url}, ${article.title}, ${article.summary}, ${article.rawMarkdown}, ${toVectorLiteral(embedding)}::vector)
+      INSERT INTO articles (id, url, title, summary, content, tags, raw_markdown, embedding)
+      VALUES (
+        ${id},
+        ${article.url},
+        ${article.title},
+        ${article.summary},
+        ${article.content},
+        ${toTextArraySql(article.tags)},
+        ${article.rawMarkdown},
+        ${toVectorLiteral(embedding)}::vector
+      )
       ON CONFLICT (url) DO UPDATE SET
         title = EXCLUDED.title,
         summary = EXCLUDED.summary,
+        content = EXCLUDED.content,
+        tags = EXCLUDED.tags,
         raw_markdown = EXCLUDED.raw_markdown,
         embedding = EXCLUDED.embedding
-      RETURNING id, url, title, summary, raw_markdown as "rawMarkdown", created_at as "createdAt"
+      RETURNING
+        id,
+        url,
+        title,
+        summary,
+        content,
+        tags,
+        raw_markdown as "rawMarkdown",
+        created_at as "createdAt"
       `,
     );
     const row = result.rows[0] as SavedArticle | undefined;
@@ -76,6 +98,7 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
         url,
         title,
         summary,
+        tags,
         1 - (embedding <=> ${toVectorLiteral(embedding)}::vector) AS score
       FROM articles
       WHERE ${minScore} <= 1 - (embedding <=> ${toVectorLiteral(embedding)}::vector)
@@ -89,12 +112,20 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
       score: row.score,
       title: row.title,
       summary: row.summary,
+      tags: row.tags,
       url: row.url,
     }));
   }
 }
 
 const toVectorLiteral = (values: number[]): string => `[${values.join(",")}]`;
+
+const toTextArraySql = (values: string[]) => {
+  if (values.length === 0) {
+    return sql`ARRAY[]::text[]`;
+  }
+  return sql`ARRAY[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`;
+};
 
 const mapSavedArticle = (
   row: typeof articlesTable.$inferSelect | undefined,
@@ -107,6 +138,8 @@ const mapSavedArticle = (
     url: row.url,
     title: row.title,
     summary: row.summary,
+    content: row.content,
+    tags: row.tags,
     rawMarkdown: row.rawMarkdown,
     createdAt: new Date(row.createdAt),
   };

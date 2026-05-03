@@ -9,11 +9,16 @@ class RuntimeStub implements AgentRuntime {
 }
 
 class WebClientStub implements WebClient {
+  constructor(private readonly failUrls: Set<string> = new Set()) {}
+
   async webList(): Promise<never[]> {
     return [];
   }
 
   async webPage(url: string): Promise<WebPage> {
+    if (this.failUrls.has(url)) {
+      throw new Error(`failed to fetch ${url}`);
+    }
     return {
       url,
       title: "Readme",
@@ -119,4 +124,32 @@ test("ignores messages outside ingest channel", async () => {
 
   expect(transport.typing).toHaveLength(0);
   expect(transport.sent).toHaveLength(0);
+});
+
+test("reports ingest errors and continues processing", async () => {
+  const transport = new TransportStub();
+  const logs: string[] = [];
+  const app = new DiscordIngestApp(
+    identity,
+    new RuntimeStub(),
+    new RepoStub(),
+    new WebClientStub(new Set(["https://example.com/fail"])),
+    transport,
+    "ingest-channel",
+    (message) => {
+      logs.push(message);
+    },
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "ingest-channel",
+    authorId: "user-1",
+    content: "https://example.com/fail https://example.com/ok",
+    mentionsBot: false,
+  });
+
+  expect(logs[0]).toContain("[ingest-error]");
+  expect(transport.sent[0]?.content).toContain("エラーが発生しました");
+  expect(transport.sent[1]?.content).toContain("保存しました: Readme");
 });

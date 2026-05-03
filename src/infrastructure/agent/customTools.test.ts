@@ -23,6 +23,8 @@ class KnowledgeRepoStub implements KnowledgeRepository {
       url: "https://example.com",
       title: "t",
       summary: "s",
+      content: "c",
+      tags: ["tag1"],
       rawMarkdown: "m",
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
@@ -34,13 +36,15 @@ class KnowledgeRepoStub implements KnowledgeRepository {
       url,
       title: "tu",
       summary: "su",
+      content: "cu",
+      tags: ["tagu"],
       rawMarkdown: "mu",
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
   }
 
   async searchSavedKnowledge(_query: string): Promise<SearchResultItem[]> {
-    return [{ articleId: "a1", score: 0.9, title: "t", summary: "s", url: "https://example.com" }];
+    return [{ articleId: "a1", score: 0.9, title: "t", summary: "s", tags: ["tag1"], url: "https://example.com" }];
   }
 }
 
@@ -117,13 +121,21 @@ test("save_web_knowledge fetches and stores article", async () => {
     userMemoryStore: new MemoryStoreStub(),
     defaultUserId: "u1",
     botId: "b1",
+    analyzeArticle: async () => ({
+      summary: "generated summary",
+      content: "generated content",
+      tags: ["ai", "agents"],
+    }),
   });
 
   const result = await findTool(tools, "save_web_knowledge").invoke({ url: "https://example.com/page" });
-  const parsed = JSON.parse(result as string) as { articleId: string; summary: string };
+  const parsed = JSON.parse(result as string) as { articleId: string; summary: string; tags: string[] };
   expect(parsed.articleId).toBe("a1");
-  expect(parsed.summary).toBe("m");
+  expect(parsed.summary).toBe("generated summary");
+  expect(parsed.tags).toEqual(["ai", "agents"]);
   expect(repo.savedArticleInput?.url).toBe("https://example.com/page");
+  expect(repo.savedArticleInput?.content).toBe("generated content");
+  expect(repo.savedArticleInput?.tags).toEqual(["ai", "agents"]);
 });
 
 test("search_saved_knowledge returns search results", async () => {
@@ -180,8 +192,10 @@ test("get_saved_article returns lightweight payload by default", async () => {
   });
 
   const result = await findTool(tools, "get_saved_article").invoke({ articleId: "a1" });
-  const parsed = JSON.parse(result as string) as { rawMarkdown?: string; summary?: string };
+  const parsed = JSON.parse(result as string) as { rawMarkdown?: string; summary?: string; content?: string; tags?: string[] };
   expect(parsed.summary).toBe("s");
+  expect(parsed.content).toBe("c");
+  expect(parsed.tags).toEqual(["tag1"]);
   expect(parsed.rawMarkdown).toBeUndefined();
 });
 

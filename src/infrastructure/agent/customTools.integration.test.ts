@@ -47,6 +47,7 @@ class InMemoryKnowledgeRepo implements KnowledgeRepository {
         score: 0.5,
         title: article.title,
         summary: article.summary,
+        tags: article.tags,
         url: article.url,
       }));
     return items;
