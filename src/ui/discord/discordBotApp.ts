@@ -2,6 +2,7 @@ import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
 import { handleMention } from "../../core/usecases/handleMention";
 import { QueueStore, QueueTask } from "../../queue/types";
 import { QueueWorker } from "../../queue/queueWorker";
+import { formatAgentUserInput } from "../agentUserInput";
 
 export interface DiscordTransport {
   onMessage(handler: (message: ChannelMessage) => Promise<void>): void;
@@ -18,11 +19,26 @@ export class DiscordBotApp {
     private readonly runtime: AgentRuntime,
     private readonly transport: DiscordTransport,
     private readonly mentionChannelId: string,
-    queue?: QueueStore,
+    queueOrDiscordBotUserId?: QueueStore | string,
+    discordBotUserIdOrQueue?: string | QueueStore,
   ) {
+    const queue = resolveQueueStore(
+      queueOrDiscordBotUserId,
+      discordBotUserIdOrQueue,
+    );
+    this.discordBotUserId = resolveDiscordBotUserId(
+      queueOrDiscordBotUserId,
+      discordBotUserIdOrQueue,
+    );
     this.queueStore = queue ?? createInlineQueue();
-    this.worker = new QueueWorker(this.queueStore, (task) => this.processTask(task), 1_000);
+    this.worker = new QueueWorker(
+      this.queueStore,
+      (task) => this.processTask(task),
+      1_000,
+    );
   }
+
+  private readonly discordBotUserId: string | undefined;
 
   start(): void {
     this.worker.start();
@@ -33,11 +49,16 @@ export class DiscordBotApp {
     });
   }
 
-  private async enqueueUserTask(text: string, message: ChannelMessage): Promise<void> {
+  private async enqueueUserTask(
+    text: string,
+    message: ChannelMessage,
+  ): Promise<void> {
+    const sanitizedText = sanitizeDiscordInput(text, this.discordBotUserId);
+    const formattedText = formatAgentUserInput(sanitizedText);
     await this.queueStore.enqueue({
       type: "user",
       action: "mention",
-      text,
+      text: formattedText,
       channelId: message.channelId,
       authorId: message.authorId,
       mentionsBot: message.mentionsBot,
@@ -48,7 +69,7 @@ export class DiscordBotApp {
 
   private async processTask(task: QueueTask): Promise<void> {
     if (task.action === "mention") {
-      await this.transport.sendTyping(task.channelId);
+      this.sendTypingBestEffort(task.channelId);
       const mentionReply = await handleMention(this.identity, this.runtime, {
         channelId: task.channelId,
         authorId: task.authorId,
@@ -62,7 +83,7 @@ export class DiscordBotApp {
     }
 
     if (task.action === "agent_input") {
-      await this.transport.sendTyping(task.channelId);
+      this.sendTypingBestEffort(task.channelId);
       const result = await this.runtime.respond({
         botId: this.identity.botId,
         systemPrompt: this.identity.systemPrompt,
@@ -74,7 +95,57 @@ export class DiscordBotApp {
       }
     }
   }
+
+  private sendTypingBestEffort(channelId: string): void {
+    void this.transport.sendTyping(channelId).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(`[discord-typing-error] ${message}\n`);
+    });
+  }
 }
+
+const sanitizeDiscordInput = (
+  text: string,
+  discordBotUserId?: string,
+): string => {
+  if (!discordBotUserId) {
+    return text;
+  }
+  const mentionPattern = new RegExp(
+    `^<@!?${escapeRegExp(discordBotUserId)}>\\s*`,
+  );
+  return text.replace(mentionPattern, "").trim();
+};
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const resolveQueueStore = (
+  first?: QueueStore | string,
+  second?: QueueStore | string,
+): QueueStore | undefined => {
+  if (typeof first === "object") {
+    return first;
+  }
+  if (typeof second === "object") {
+    return second;
+  }
+  return undefined;
+};
+
+const resolveDiscordBotUserId = (
+  first?: QueueStore | string,
+  second?: QueueStore | string,
+): string | undefined => {
+  if (typeof first === "string") {
+    return first;
+  }
+  if (typeof second === "string") {
+    return second;
+  }
+  return undefined;
+};
 
 const createInlineQueue = (): QueueStore => {
   const items: QueueTask[] = [];
@@ -89,7 +160,9 @@ const createInlineQueue = (): QueueStore => {
         authorId: input.authorId,
         mentionsBot: input.mentionsBot,
         dueAt: input.dueAt.toISOString(),
-        ...(input.intervalMinutes ? { intervalMinutes: input.intervalMinutes } : {}),
+        ...(input.intervalMinutes
+          ? { intervalMinutes: input.intervalMinutes }
+          : {}),
         createdAt: new Date().toISOString(),
         locked: false,
       };
@@ -97,7 +170,9 @@ const createInlineQueue = (): QueueStore => {
       return task;
     },
     dequeueReady: async (now) => {
-      const idx = items.findIndex((it) => !it.locked && new Date(it.dueAt).getTime() <= now.getTime());
+      const idx = items.findIndex(
+        (it) => !it.locked && new Date(it.dueAt).getTime() <= now.getTime(),
+      );
       if (idx < 0) {
         return null;
       }

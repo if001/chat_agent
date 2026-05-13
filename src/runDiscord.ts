@@ -15,6 +15,7 @@ import {
 import { SimpleChatRuntime } from "./infrastructure/agent/simpleChatRuntime";
 import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
 import { createCustomTools } from "./infrastructure/agent/customTools";
+import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
@@ -71,6 +72,7 @@ const main = async (): Promise<void> => {
   const repository = new PostgresKnowledgeRepository(db, embeddingProvider);
 
   const userMemoryStore = new PostgresUserMemoryStore(db);
+  const dailyEventRepository = new PostgresDailyEventRepository(db);
 
   const checkpointer = PostgresSaver.fromConnString(env.postgresUrl, {
     schema: "app",
@@ -97,6 +99,7 @@ const main = async (): Promise<void> => {
     knowledgeRepository: repository,
     webClient,
     userMemoryStore,
+    dailyEventRepository,
     defaultUserId: "discord-user",
     botId: identity.botId,
     enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
@@ -168,6 +171,7 @@ const main = async (): Promise<void> => {
     transport,
     env.mentionChannelId,
     queueStore,
+    env.discordBotUserId,
   );
   app.start();
 
@@ -177,6 +181,6 @@ const main = async (): Promise<void> => {
 main().catch((error: unknown) => {
   const message =
     error instanceof Error ? (error.stack ?? error.message) : String(error);
-  process.stderr.write(`${message}\n`);
+  process.stdout.write(`${message}\n`);
   process.exit(1);
 });

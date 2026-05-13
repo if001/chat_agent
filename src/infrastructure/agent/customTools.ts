@@ -1,12 +1,18 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod/v3";
-import { KnowledgeRepository, UserMemoryStore, WebClient } from "../../core/types";
+import {
+  DailyEventRepository,
+  KnowledgeRepository,
+  UserMemoryStore,
+  WebClient,
+} from "../../core/types";
 import { ArticleAnalysis } from "../../core/usecases/analyzeArticle";
 
 export interface CustomToolDeps {
   knowledgeRepository: KnowledgeRepository;
   webClient: WebClient;
   userMemoryStore: UserMemoryStore;
+  dailyEventRepository?: DailyEventRepository;
   defaultUserId: string;
   botId: string;
   enqueueTask?: (input: {
@@ -22,6 +28,13 @@ export interface CustomToolDeps {
 const schemaCompat = <T>(schema: T): T => schema;
 
 export const createCustomTools = (deps: CustomToolDeps) => {
+  const requireDailyEventRepository = (): DailyEventRepository => {
+    if (!deps.dailyEventRepository) {
+      throw new Error("daily event backend is not configured");
+    }
+    return deps.dailyEventRepository;
+  };
+
   const webListTool = tool(
     async ({ query, k }: { query: string; k: number }) => {
       const results = await deps.webClient.webList(query, k);
@@ -192,6 +205,99 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
   );
 
+  const rememberDailyEventTool = tool(
+    async ({ eventDate, summary, userId, tags, sourceMessage }: {
+      eventDate: string;
+      summary: string;
+      userId?: string;
+      tags?: string[];
+      sourceMessage?: string;
+    }) => {
+      const dailyEventRepository = requireDailyEventRepository();
+      const saved = await dailyEventRepository.rememberDailyEvent({
+        botId: deps.botId,
+        userId: userId ?? deps.defaultUserId,
+        eventDate,
+        summary,
+        ...(tags ? { tags } : {}),
+        ...(sourceMessage ? { sourceMessage } : {}),
+      });
+      return JSON.stringify(saved);
+    },
+    {
+      name: "remember_daily_event",
+      description: "Stores a short daily record of what the user did on a specific date.",
+      schema: schemaCompat(z.object({
+        eventDate: z.string(),
+        summary: z.string(),
+        userId: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        sourceMessage: z.string().optional(),
+      })) as never,
+    },
+  );
+
+  const searchDailyEventsTool = tool(
+    async ({ query, userId, limit, fromDate, toDate }: {
+      query: string;
+      userId?: string;
+      limit?: number;
+      fromDate?: string;
+      toDate?: string;
+    }) => {
+      const dailyEventRepository = requireDailyEventRepository();
+      const results = await dailyEventRepository.searchDailyEvents({
+        botId: deps.botId,
+        userId: userId ?? deps.defaultUserId,
+        query,
+        ...(limit ? { limit } : {}),
+        ...(fromDate ? { fromDate } : {}),
+        ...(toDate ? { toDate } : {}),
+      });
+      return JSON.stringify(results);
+    },
+    {
+      name: "search_daily_events",
+      description: "Searches short daily user activity records by text and optional date range.",
+      schema: schemaCompat(z.object({
+        query: z.string(),
+        userId: z.string().optional(),
+        limit: z.number().int().min(1).max(20).optional(),
+        fromDate: z.string().optional(),
+        toDate: z.string().optional(),
+      })) as never,
+    },
+  );
+
+  const getDailyEventsByDateTool = tool(
+    async ({ date, userId, windowDays, limit }: {
+      date: string;
+      userId?: string;
+      windowDays?: number;
+      limit?: number;
+    }) => {
+      const dailyEventRepository = requireDailyEventRepository();
+      const results = await dailyEventRepository.getDailyEventsByDate({
+        botId: deps.botId,
+        userId: userId ?? deps.defaultUserId,
+        date,
+        ...(windowDays !== undefined ? { windowDays } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return JSON.stringify(results);
+    },
+    {
+      name: "get_daily_events_by_date",
+      description: "Gets daily user activity records around a specific date.",
+      schema: schemaCompat(z.object({
+        date: z.string(),
+        userId: z.string().optional(),
+        windowDays: z.number().int().min(0).max(30).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      })) as never,
+    },
+  );
+
   const enqueueTaskTool = tool(
     async ({ text, delayMinutes, everyMinutes, atIso }: { text: string; delayMinutes?: number; everyMinutes?: number; atIso?: string }) => {
       if (!deps.enqueueTask) {
@@ -247,6 +353,9 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     getSavedArticleTool,
     rememberUserNoteTool,
     getUserNotesTool,
+    rememberDailyEventTool,
+    searchDailyEventsTool,
+    getDailyEventsByDateTool,
     readMemoryFileTool,
     enqueueTaskTool,
     getQueueStatusTool,

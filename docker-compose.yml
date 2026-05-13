@@ -1,0 +1,39 @@
+services:
+  discord_ao:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "lib/runDiscord.js"]
+    env_file:
+      - .env.ao
+    environment:
+      DEEPAGENT_SKILLS_SOURCES: /app/src/skills/
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+
+  discord_ak:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "lib/runDiscord.js"]
+    env_file:
+      - .env.ak
+    environment:
+      DEEPAGENT_SKILLS_SOURCES: /app/src/skills/
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "lib/runIngest.js"]
+    env_file:
+      - .env.ao
+    environment:
+      DEEPAGENT_SKILLS_SOURCES: /app/src/skills/
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data

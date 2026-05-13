@@ -1,10 +1,20 @@
 import { AgentRequest, AgentResponse, AgentRuntime } from "../../core/types";
-import { BaseCheckpointSaver, BaseStore } from "@langchain/langgraph-checkpoint";
+import {
+  BaseCheckpointSaver,
+  BaseStore,
+} from "@langchain/langgraph-checkpoint";
 
 interface DeepAgentInvoker {
-  invoke(input: { messages: Array<{ role: "user" | "assistant" | "system"; content: string }> }): Promise<{ messages?: unknown[] }>;
+  invoke(input: {
+    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  }): Promise<{ messages?: unknown[] }>;
   invoke(
-    input: { messages: Array<{ role: "user" | "assistant" | "system"; content: string }> },
+    input: {
+      messages: Array<{
+        role: "user" | "assistant" | "system";
+        content: string;
+      }>;
+    },
     config: { configurable: { thread_id: string } },
   ): Promise<{ messages?: unknown[] }>;
 }
@@ -25,7 +35,9 @@ export class DeepAgentRuntime implements AgentRuntime {
     private readonly tools: unknown[],
     private readonly createDeepAgent: DeepAgentFactory,
     private readonly getStoreByBotId: (botId: string) => BaseStore | undefined,
-    private readonly getCheckpointByBotId: (botId: string) => BaseCheckpointSaver | undefined,
+    private readonly getCheckpointByBotId: (
+      botId: string,
+    ) => BaseCheckpointSaver | undefined,
   ) {}
 
   async respond(request: AgentRequest): Promise<AgentResponse> {
@@ -39,7 +51,10 @@ export class DeepAgentRuntime implements AgentRuntime {
     return { content: assistantMessage?.content ?? "" };
   }
 
-  private getOrCreateAgent(botId: string, systemPrompt: string): DeepAgentInvoker {
+  private getOrCreateAgent(
+    botId: string,
+    systemPrompt: string,
+  ): DeepAgentInvoker {
     const cached = this.agentCache.get(botId);
     if (cached) {
       return cached;
@@ -94,13 +109,17 @@ const extractLastAssistantMessage = (
       continue;
     }
 
-    const content = stringifyMessageContent((message as { content?: unknown }).content);
+    const content = stringifyMessageContent(
+      (message as { content?: unknown }).content,
+    );
     return { role: "assistant", content };
   }
   return null;
 };
 
-const getRoleFromMessage = (message: unknown): "assistant" | "user" | "system" | null => {
+const getRoleFromMessage = (
+  message: unknown,
+): "assistant" | "user" | "system" | null => {
   if (typeof message !== "object" || message === null) {
     return null;
   }
@@ -108,7 +127,11 @@ const getRoleFromMessage = (message: unknown): "assistant" | "user" | "system" |
   if (role === "assistant" || role === "user" || role === "system") {
     return role;
   }
-  const type = (message as { _getType?: unknown })._getType;
+  const getType = (message as { _getType?: unknown })._getType;
+  const type =
+    typeof getType === "function"
+      ? getType.call(message)
+      : (message as { type?: unknown }).type;
   if (type === "ai") {
     return "assistant";
   }

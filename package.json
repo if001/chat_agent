@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start:terminal": "tsx --env-file=.env.ao src/runTerminal.ts",
-    "start:discord": "tsx --env-file=.env.ao src/runDiscord.ts",
+    "start:ao": "tsx --env-file=.env.ao src/runDiscord.ts",
+    "start:aka": "tsx --env-file=.env.aka src/runDiscord.ts",
     "start:ingest": "tsx --env-file=.env.ao src/runIngest.ts",
     "build": "tsc -p .",
     "build:live": "nodemon --watch 'src/**/*.ts' --exec \"ts-node\" src/index.ts",

@@ -3,6 +3,8 @@ import { QueueStore, QueueTask } from "./types";
 export class QueueWorker {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private processing = false;
+  private pendingTick = false;
 
   constructor(
     private readonly queue: QueueStore,
@@ -35,15 +37,47 @@ export class QueueWorker {
     if (!this.running) {
       return;
     }
-    const task = await this.queue.dequeueReady(now);
-    if (!task) {
+    if (this.processing) {
+      this.pendingTick = true;
       return;
     }
+
+    this.processing = true;
     try {
-      await this.handler(task);
-      await this.queue.ack(task.id);
-    } catch {
-      await this.queue.release(task.id);
+      let currentNow = now;
+      while (this.running) {
+        const task = await this.queue.dequeueReady(currentNow);
+        if (!task) {
+          return;
+        }
+        try {
+          await this.handler(task);
+        } catch {
+          await this.queue.release(task.id);
+          currentNow = new Date();
+          continue;
+        }
+
+        try {
+          await this.queue.ack(task.id);
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error
+              ? (error.stack ?? error.message)
+              : String(error);
+          process.stdout.write(
+            `[queue-ack-error] taskId=${task.id} ${message}\n`,
+          );
+          return;
+        }
+        currentNow = new Date();
+      }
+    } finally {
+      this.processing = false;
+      if (this.pendingTick && this.running) {
+        this.pendingTick = false;
+        await this.tick(new Date());
+      }
     }
   }
 }

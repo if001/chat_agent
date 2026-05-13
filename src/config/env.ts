@@ -6,6 +6,7 @@ if (!process.env.DISCORD_BOT_TOKEN && !process.env.POSTGRES_URL) {
 
 export interface AppEnv {
   botId: string;
+  discordBotUserId?: string;
   mentionChannelId: string;
   ingestChannelId?: string;
   discordToken: string;
@@ -31,6 +32,9 @@ const required = (name: string): string => {
 };
 export const loadEnv = (): AppEnv => ({
   botId: process.env.BOT_ID ?? "ao",
+  ...(process.env.DISCORD_BOT_USER_ID
+    ? { discordBotUserId: process.env.DISCORD_BOT_USER_ID }
+    : {}),
   mentionChannelId: required("MENTION_CHANNEL_ID"),
   ...(process.env.INGEST_CHANNEL_ID
     ? { ingestChannelId: process.env.INGEST_CHANNEL_ID }

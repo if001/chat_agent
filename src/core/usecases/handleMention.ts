@@ -8,13 +8,11 @@ export const handleMention = async (
   if (!message.mentionsBot) {
     return null;
   }
-
   const response = await runtime.respond({
     botId: identity.botId,
     systemPrompt: identity.systemPrompt,
     threadId: `${message.channelId}:${message.authorId}`,
     messages: [{ role: "user", content: message.content }],
   });
-
   return response.content;
 };

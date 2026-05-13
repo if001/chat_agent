@@ -63,6 +63,49 @@ export interface UserMemoryStore {
   readMemoryFile(path: string): Promise<string>;
 }
 
+export interface DailyEvent {
+  id: number;
+  botId: string;
+  userId: string;
+  eventDate: string;
+  summary: string;
+  tags: string[];
+  sourceMessage?: string;
+  createdAt: Date;
+}
+
+export interface RememberDailyEventInput {
+  botId: string;
+  userId: string;
+  eventDate: string;
+  summary: string;
+  tags?: string[];
+  sourceMessage?: string;
+}
+
+export interface SearchDailyEventsInput {
+  botId: string;
+  userId: string;
+  query: string;
+  limit?: number;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface GetDailyEventsByDateInput {
+  botId: string;
+  userId: string;
+  date: string;
+  windowDays?: number;
+  limit?: number;
+}
+
+export interface DailyEventRepository {
+  rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent>;
+  searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]>;
+  getDailyEventsByDate(input: GetDailyEventsByDateInput): Promise<DailyEvent[]>;
+}
+
 export interface WebListItem {
   rank: number;
   title: string;

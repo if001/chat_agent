@@ -32,14 +32,15 @@ export class PostgresUserMemoryStore implements UserMemoryStore {
     }));
   }
 
-  async readMemoryFile(path: string): Promise<string> {
-    const normalized = path.replace(/\\/g, "/");
+  async readMemoryFile(filePath: string): Promise<string> {
+    const normalized = filePath.replace(/\\/g, "/");
     if (!normalized.startsWith("/memories/")) {
       throw new Error("read_memory_file only allows paths under /memories/");
     }
-    const resolved = pathModuleResolve(normalized);
+    const resolved = resolveMemoryPath(normalized);
     return readFile(resolved, "utf8");
   }
 }
 
-const pathModuleResolve = (input: string): string => path.posix.normalize(path.resolve(input));
+export const resolveMemoryPath = (publicPath: string): string =>
+  path.join(process.cwd(), publicPath.replace(/^\//, ""));
