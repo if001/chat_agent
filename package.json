@@ -12,6 +12,8 @@
     "build": "tsc -p .",
     "build:live": "nodemon --watch 'src/**/*.ts' --exec \"ts-node\" src/index.ts",
     "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:critical": "jest --runInBand src/ui/discord/discordBotApp.integration.test.ts src/infrastructure/discord/discordJsTransport.test.ts src/ui/discord/discordBotApp.test.ts src/queue/queueWorker.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "start:setup-memory": "tsx --env-file=.env.ao src/runSetupMemory.ts"

@@ -22,8 +22,10 @@ import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { FileQueueStore } from "./queue/fileQueueStore";
 import { join } from "node:path";
 import { analyzeArticle } from "./core/usecases/analyzeArticle";
+import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 
 const main = async (): Promise<void> => {
+  patchLangChainUuidV4();
   const deepagents = await import("deepagents");
   const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
     model: unknown;

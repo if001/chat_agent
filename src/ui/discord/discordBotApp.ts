@@ -43,9 +43,14 @@ export class DiscordBotApp {
   start(): void {
     this.worker.start();
     this.transport.onMessage(async (message) => {
+      this.logInfo(
+        `received channel=${message.channelId} author=${message.authorId} mentionsBot=${message.mentionsBot}`,
+      );
       if (message.channelId === this.mentionChannelId) {
         await this.enqueueUserTask(message.content, message);
+        return;
       }
+      this.logInfo(`ignored channel=${message.channelId} reason=channel_mismatch`);
     });
   }
 
@@ -55,7 +60,7 @@ export class DiscordBotApp {
   ): Promise<void> {
     const sanitizedText = sanitizeDiscordInput(text, this.discordBotUserId);
     const formattedText = formatAgentUserInput(sanitizedText);
-    await this.queueStore.enqueue({
+    const task = await this.queueStore.enqueue({
       type: "user",
       action: "mention",
       text: formattedText,
@@ -64,12 +69,17 @@ export class DiscordBotApp {
       mentionsBot: message.mentionsBot,
       dueAt: new Date(),
     });
+    this.logInfo(
+      `queued id=${task.id} action=${task.action} mentionsBot=${task.mentionsBot}`,
+    );
     await this.worker.tick(new Date());
   }
 
   private async processTask(task: QueueTask): Promise<void> {
+    this.logInfo(`processing id=${task.id} action=${task.action}`);
     if (task.action === "mention") {
       if (!task.mentionsBot) {
+        this.logInfo(`ignored id=${task.id} reason=not_mentioned`);
         return;
       }
       this.sendTypingBestEffort(task.channelId);
@@ -81,6 +91,9 @@ export class DiscordBotApp {
       });
       if (mentionReply) {
         await this.transport.sendMessage(task.channelId, mentionReply);
+        this.logInfo(`replied id=${task.id} action=mention`);
+      } else {
+        this.logError(`no_reply id=${task.id} action=mention`);
       }
       return;
     }
@@ -95,6 +108,9 @@ export class DiscordBotApp {
       });
       if (result.content.length > 0) {
         await this.transport.sendMessage(task.channelId, result.content);
+        this.logInfo(`replied id=${task.id} action=agent_input`);
+      } else {
+        this.logError(`no_reply id=${task.id} action=agent_input`);
       }
     }
   }
@@ -105,6 +121,14 @@ export class DiscordBotApp {
         error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(`[discord-typing-error] ${message}\n`);
     });
+  }
+
+  private logInfo(message: string): void {
+    process.stdout.write(`[discord-bot] ${message}\n`);
+  }
+
+  private logError(message: string): void {
+    process.stdout.write(`[discord-bot-error] ${message}\n`);
   }
 }
 
