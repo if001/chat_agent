@@ -69,6 +69,9 @@ export class DiscordBotApp {
 
   private async processTask(task: QueueTask): Promise<void> {
     if (task.action === "mention") {
+      if (!task.mentionsBot) {
+        return;
+      }
       this.sendTypingBestEffort(task.channelId);
       const mentionReply = await handleMention(this.identity, this.runtime, {
         channelId: task.channelId,

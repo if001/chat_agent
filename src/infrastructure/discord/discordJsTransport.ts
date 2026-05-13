@@ -22,13 +22,28 @@ interface DiscordClientLike {
 export class DiscordJsTransport implements DiscordTransport {
   private handler: ((message: ChannelMessage) => Promise<void>) | null = null;
   private readonly channelMap = new Map<string, DiscordTextChannel>();
+  private readonly allowedBotUserIds: Set<string>;
 
-  constructor(private readonly client: DiscordClientLike) {}
+  constructor(
+    private readonly client: DiscordClientLike,
+    allowedBotUserIds: string[] = [],
+  ) {
+    this.allowedBotUserIds = new Set(allowedBotUserIds);
+  }
 
   onMessage(handler: (message: ChannelMessage) => Promise<void>): void {
     this.handler = handler;
     this.client.on("messageCreate", async (message) => {
-      if (!this.handler || message.author.bot || !this.client.user) {
+      if (!this.handler || !this.client.user) {
+        return;
+      }
+      if (message.author.id === this.client.user.id) {
+        return;
+      }
+      if (
+        message.author.bot &&
+        !this.allowedBotUserIds.has(message.author.id)
+      ) {
         return;
       }
 

@@ -190,6 +190,29 @@ test("does not react outside mention channel", async () => {
   expect(transport.sent).toHaveLength(0);
 });
 
+test("does not type or reply when message in mention channel does not mention this bot", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "@other-bot hi",
+    mentionsBot: false,
+  });
+
+  expect(runtime.started).toEqual([]);
+  expect(transport.typing).toEqual([]);
+  expect(transport.sent).toEqual([]);
+});
+
 test("does not block reply when sendTyping does not resolve", async () => {
   class SlowTypingTransport extends TransportStub {
     override async sendTyping(channelId: string): Promise<void> {

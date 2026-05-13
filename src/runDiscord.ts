@@ -163,7 +163,10 @@ const main = async (): Promise<void> => {
       GatewayIntentBits.MessageContent,
     ],
   });
-  const transport = new DiscordJsTransport(discordClient);
+  const transport = new DiscordJsTransport(
+    discordClient,
+    env.allowedBotUserIds,
+  );
 
   const app = new DiscordBotApp(
     identity,

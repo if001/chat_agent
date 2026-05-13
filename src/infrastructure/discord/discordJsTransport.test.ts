@@ -53,3 +53,61 @@ test("forwards mention and sends response", async () => {
   expect(sent[0]).toBe("reply");
   expect(typingCount).toBe(1);
 });
+
+test("ignores bot-authored message when bot id is not allowlisted", async () => {
+  const client = new FakeClient();
+  const transport = new DiscordJsTransport(client);
+  let called = false;
+
+  transport.onMessage(async () => {
+    called = true;
+  });
+
+  const handler = client.handlers.messageCreate;
+  if (!handler) {
+    throw new Error("handler not found");
+  }
+
+  await handler({
+    content: "<@bot-1> hello",
+    author: { id: "bot-2", bot: true },
+    channel: {
+      id: "c1",
+      send: async () => {},
+      sendTyping: async () => {},
+    },
+    mentions: { has: (userId: string) => userId === "bot-1" },
+  });
+
+  expect(called).toBe(false);
+});
+
+test("forwards bot-authored message when bot id is allowlisted", async () => {
+  const client = new FakeClient();
+  const transport = new DiscordJsTransport(client, ["bot-2"]);
+  let called = false;
+
+  transport.onMessage(async (message) => {
+    called = true;
+    expect(message.authorId).toBe("bot-2");
+    expect(message.mentionsBot).toBe(true);
+  });
+
+  const handler = client.handlers.messageCreate;
+  if (!handler) {
+    throw new Error("handler not found");
+  }
+
+  await handler({
+    content: "<@bot-1> hello",
+    author: { id: "bot-2", bot: true },
+    channel: {
+      id: "c1",
+      send: async () => {},
+      sendTyping: async () => {},
+    },
+    mentions: { has: (userId: string) => userId === "bot-1" },
+  });
+
+  expect(called).toBe(true);
+});
