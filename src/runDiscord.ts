@@ -23,8 +23,11 @@ import { FileQueueStore } from "./queue/fileQueueStore";
 import { join } from "node:path";
 import { analyzeArticle } from "./core/usecases/analyzeArticle";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
+import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
+import { createRelationshipSystemClient } from "./infrastructure/relationship/relationshipSystemClient";
 
 const main = async (): Promise<void> => {
+  console.log("start!");
   patchLangChainUuidV4();
   const deepagents = await import("deepagents");
   const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
@@ -169,6 +172,15 @@ const main = async (): Promise<void> => {
     discordClient,
     env.allowedBotUserIds,
   );
+  const memoryClient = createMemorySystemClient({
+    postgresUrl: env.postgresUrl,
+    ollamaBaseUrl: env.ollamaBaseUrl,
+    ollamaModel: env.ollamaChatModel,
+    ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
+  });
+  const relationshipClient = createRelationshipSystemClient({
+    turnRecordDir: env.relationshipStoreDir,
+  });
 
   const app = new DiscordBotApp(
     identity,
@@ -177,6 +189,27 @@ const main = async (): Promise<void> => {
     env.mentionChannelId,
     queueStore,
     env.discordBotUserId,
+    async (record) => {
+      await memoryClient.ingestTurnRecord(record);
+      await relationshipClient.ingestTurnRecord(record);
+    },
+    async ({ botId, threadId, currentContext }) => {
+      const cards = await memoryClient.queryApplicablePolicyCards({
+        botId,
+        threadId,
+        currentContext,
+        limit: 5,
+      });
+      if (cards.length === 0) {
+        return undefined;
+      }
+      return cards
+        .map(
+          (card, idx) =>
+            `${idx + 1}. ${card.title}\n- appliesWhen: ${card.appliesWhen}\n- recommendedBehavior: ${card.recommendedBehavior}\n- avoidBehavior: ${card.avoidBehavior}\n- distinctionNotes: ${card.distinctionNotes}`,
+        )
+        .join("\n\n");
+    },
   );
   app.start();
 

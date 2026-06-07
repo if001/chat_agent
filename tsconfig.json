@@ -4,8 +4,14 @@
     "outDir": "lib",
     "module": "node16",
     "target": "es2022",
-    "types": ["node", "jest"],
-    "lib": ["es2022", "dom"],
+    "types": [
+      "node",
+      "jest"
+    ],
+    "lib": [
+      "es2022",
+      "dom"
+    ],
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
@@ -18,6 +24,12 @@
     "resolveJsonModule": true,
     "moduleResolution": "node16"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "lib", "node_modules"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "lib",
+    "node_modules"
+  ]
 }

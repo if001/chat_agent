@@ -7,9 +7,15 @@ const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 const formatUserMessage = (message: string): string =>
   `Current time: ${FIXED_NOW}\n\nUser message:\n${message}`;
 
+const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
 class RuntimeStub implements AgentRuntime {
   public readonly started: string[] = [];
   public readonly finished: string[] = [];
+  public readonly systemPrompts: string[] = [];
   private readonly blockers = new Map<string, Promise<void>>();
   private readonly releases = new Map<string, () => void>();
 
@@ -27,8 +33,10 @@ class RuntimeStub implements AgentRuntime {
   }
 
   async respond(request: {
+    systemPrompt: string;
     messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   }): Promise<{ content: string }> {
+    this.systemPrompts.push(request.systemPrompt);
     const content = request.messages.at(-1)?.content ?? "";
     this.started.push(content);
     const blocker = this.blockers.get(content);
@@ -100,6 +108,159 @@ test("replies when mentioned", async () => {
   expect(runtime.started).toEqual([formatUserMessage("@bot hi")]);
   expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("@bot hi")}`);
   expect(transport.typing[0]).toBe("mention-channel");
+});
+
+test("records turn when mention reply is sent", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const records: string[] = [];
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    undefined,
+    undefined,
+    async (record) => {
+      records.push(record.threadId);
+    },
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "@bot hi",
+    mentionsBot: true,
+  });
+
+  expect(records).toEqual(["mention-channel:user-1"]);
+});
+
+test("still replies when turn recording fails", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    undefined,
+    undefined,
+    async () => {
+      throw new Error("record failed");
+    },
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "@bot hi",
+    mentionsBot: true,
+  });
+
+  expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("@bot hi")}`);
+});
+
+test("injects memory policy context into system prompt when resolver returns cards", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    undefined,
+    undefined,
+    undefined,
+    async () => "1. policy title\n- recommendedBehavior: do x",
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "@bot hi",
+    mentionsBot: true,
+  });
+
+  const usedPrompt = runtime.systemPrompts[0] ?? "";
+  expect(usedPrompt).toContain("# Memory Policy Context");
+  expect(usedPrompt).toContain("policy title");
+});
+
+test("still replies when policy resolver fails", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      throw new Error("policy resolve failed");
+    },
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "@bot hi",
+    mentionsBot: true,
+  });
+
+  expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("@bot hi")}`);
+  expect(runtime.systemPrompts[0]).toBe(identity.systemPrompt);
+});
+
+test("injects memory policy context for scheduled agent input", async () => {
+  const task: QueueTask = {
+    id: "scheduled-1",
+    type: "agent",
+    action: "agent_input",
+    text: "scheduled check-in",
+    channelId: "mention-channel",
+    dueAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    locked: false,
+  };
+  let dequeueCount = 0;
+
+  const queue: QueueStore = {
+    enqueue: async () => task,
+    dequeueReady: async () => {
+      dequeueCount += 1;
+      return dequeueCount === 1 ? { ...task, locked: true } : null;
+    },
+    ack: async () => undefined,
+    release: async () => undefined,
+  };
+
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    queue,
+    undefined,
+    undefined,
+    async () => "1. scheduled policy\n- recommendedBehavior: follow up",
+  );
+
+  app.start();
+  await flushMicrotasks();
+  await flushMicrotasks();
+
+  expect(runtime.systemPrompts[0]).toContain("# Memory Policy Context");
+  expect(runtime.systemPrompts[0]).toContain("scheduled policy");
+  expect(transport.sent[0]?.content).toBe("bot response: scheduled check-in");
 });
 
 test("strips leading discord mention before sending input to the agent", async () => {
@@ -263,14 +424,14 @@ test("processes later queued user input after the current reply finishes", async
     content: "first",
     mentionsBot: true,
   });
-  await Promise.resolve();
+  await flushMicrotasks();
   const secondEmit = transport.emit({
     channelId: "mention-channel",
     authorId: "user-1",
     content: "second",
     mentionsBot: true,
   });
-  await Promise.resolve();
+  await flushMicrotasks();
 
   expect(runtime.started).toEqual([formatUserMessage("first")]);
   expect(runtime.finished).toEqual([]);

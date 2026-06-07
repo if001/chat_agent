@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev2": "tsx src/sample.mts",
     "dev": "tsx watch src/index.ts",
     "start:terminal": "tsx --env-file=.env.ao src/runTerminal.ts",
     "start:ao": "tsx --env-file=.env.ao src/runDiscord.ts",
@@ -16,7 +17,8 @@
     "test:critical": "jest --runInBand src/ui/discord/discordBotApp.integration.test.ts src/infrastructure/discord/discordJsTransport.test.ts src/ui/discord/discordBotApp.test.ts src/queue/queueWorker.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "start:setup-memory": "tsx --env-file=.env.ao src/runSetupMemory.ts"
+    "start:setup-memory": "tsx --env-file=.env.ao src/runSetupMemory.ts",
+    "seed:policies": "tsx --env-file=.env.ao packages/memory-system/src/cli/seedDefaultPolicies.ts"
   },
   "keywords": [],
   "author": "",
@@ -34,6 +36,8 @@
   "dependencies": {
     "@langchain/langgraph-checkpoint-postgres": "^1.0.1",
     "@langchain/ollama": "^1.2.7",
+    "@chat-agent/memory-system": "file:packages/memory-system",
+    "@chat-agent/relationship-system": "file:packages/relationship-system",
     "deepagents": "^1.7.0",
     "discord.js": "^14.21.0",
     "dotenv": "^17.2.3",

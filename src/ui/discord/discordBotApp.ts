@@ -3,6 +3,7 @@ import { handleMention } from "../../core/usecases/handleMention";
 import { QueueStore, QueueTask } from "../../queue/types";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
+import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
 
 export interface DiscordTransport {
   onMessage(handler: (message: ChannelMessage) => Promise<void>): void;
@@ -21,6 +22,12 @@ export class DiscordBotApp {
     private readonly mentionChannelId: string,
     queueOrDiscordBotUserId?: QueueStore | string,
     discordBotUserIdOrQueue?: string | QueueStore,
+    private readonly onTurnRecorded?: (record: TurnRecordInput) => Promise<void>,
+    private readonly resolvePolicyPrompt?: (input: {
+      botId: string;
+      threadId: string;
+      currentContext: string;
+    }) => Promise<string | undefined>,
   ) {
     const queue = resolveQueueStore(
       queueOrDiscordBotUserId,
@@ -83,14 +90,16 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
+      const mentionThreadId = `${task.channelId}:${task.authorId}`;
       const mentionReply = await handleMention(this.identity, this.runtime, {
         channelId: task.channelId,
         authorId: task.authorId,
         content: task.text,
         mentionsBot: task.mentionsBot,
-      });
+      }, await this.resolveSystemPrompt(mentionThreadId, task.text));
       if (mentionReply) {
         await this.transport.sendMessage(task.channelId, mentionReply);
+        await this.recordTurn(task, mentionReply);
         this.logInfo(`replied id=${task.id} action=mention`);
       } else {
         this.logError(`no_reply id=${task.id} action=mention`);
@@ -100,14 +109,16 @@ export class DiscordBotApp {
 
     if (task.action === "agent_input") {
       this.sendTypingBestEffort(task.channelId);
+      const threadId = `${task.channelId}:scheduled`;
       const result = await this.runtime.respond({
         botId: this.identity.botId,
-        systemPrompt: this.identity.systemPrompt,
-        threadId: `${task.channelId}:scheduled`,
+        systemPrompt: await this.resolveSystemPrompt(threadId, task.text),
+        threadId,
         messages: [{ role: "user", content: task.text }],
       });
       if (result.content.length > 0) {
         await this.transport.sendMessage(task.channelId, result.content);
+        await this.recordTurn(task, result.content);
         this.logInfo(`replied id=${task.id} action=agent_input`);
       } else {
         this.logError(`no_reply id=${task.id} action=agent_input`);
@@ -129,6 +140,56 @@ export class DiscordBotApp {
 
   private logError(message: string): void {
     process.stdout.write(`[discord-bot-error] ${message}\n`);
+  }
+
+  private async recordTurn(task: QueueTask, assistantContent: string): Promise<void> {
+    if (!this.onTurnRecorded) {
+      return;
+    }
+    const timestamp = new Date().toISOString();
+    try {
+      await this.onTurnRecorded({
+        botId: this.identity.botId,
+        threadId:
+          task.action === "agent_input"
+            ? `${task.channelId}:scheduled`
+            : `${task.channelId}:${task.authorId}`,
+        messages: [
+          { role: "user", content: task.text, timestampIso: timestamp },
+          { role: "assistant", content: assistantContent, timestampIso: timestamp },
+        ],
+        createdAtIso: timestamp,
+      });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(`[memory-system-error] ${message}\n`);
+    }
+  }
+
+  private async resolveSystemPrompt(
+    threadId: string,
+    currentContext: string,
+  ): Promise<string> {
+    if (!this.resolvePolicyPrompt) {
+      return this.identity.systemPrompt;
+    }
+    try {
+      const policyPrompt = await this.resolvePolicyPrompt({
+        botId: this.identity.botId,
+        threadId,
+        currentContext,
+      });
+      if (!policyPrompt || policyPrompt.trim().length === 0) {
+        return this.identity.systemPrompt;
+      }
+      return `${this.identity.systemPrompt}\n\n# Memory Policy Context\n${policyPrompt}`;
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(`[memory-system-error] policy resolve failed: ${message}\n`);
+      return this.identity.systemPrompt;
+    }
   }
 }
 

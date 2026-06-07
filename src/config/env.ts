@@ -22,6 +22,7 @@ export interface AppEnv {
   ollamaEmbeddingDimension: number;
   deepAgentSkillsSources: string[];
   queueDir: string;
+  relationshipStoreDir: string;
 }
 
 const required = (name: string): string => {
@@ -31,6 +32,7 @@ const required = (name: string): string => {
   }
   return value;
 };
+
 export const loadEnv = (): AppEnv => ({
   botId: process.env.BOT_ID ?? "ao",
   ...(process.env.DISCORD_BOT_USER_ID
@@ -68,4 +70,6 @@ export const loadEnv = (): AppEnv => ({
     .map((v) => v.trim())
     .filter((v) => v.length > 0),
   queueDir: process.env.QUEUE_DIR ?? "data/queues",
+  relationshipStoreDir:
+    process.env.RELATIONSHIP_STORE_DIR ?? "data/relationship-system",
 });

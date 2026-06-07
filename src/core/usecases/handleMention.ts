@@ -4,13 +4,14 @@ export const handleMention = async (
   identity: BotIdentity,
   runtime: AgentRuntime,
   message: ChannelMessage,
+  systemPromptOverride?: string,
 ): Promise<string | null> => {
   if (!message.mentionsBot) {
     return null;
   }
   const response = await runtime.respond({
     botId: identity.botId,
-    systemPrompt: identity.systemPrompt,
+    systemPrompt: systemPromptOverride ?? identity.systemPrompt,
     threadId: `${message.channelId}:${message.authorId}`,
     messages: [{ role: "user", content: message.content }],
   });
