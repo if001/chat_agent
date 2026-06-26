@@ -23,6 +23,7 @@ export interface AppEnv {
   deepAgentSkillsSources: string[];
   queueDir: string;
   relationshipStoreDir: string;
+  simplePomdpStoreDir: string;
 }
 
 const required = (name: string): string => {
@@ -72,4 +73,6 @@ export const loadEnv = (): AppEnv => ({
   queueDir: process.env.QUEUE_DIR ?? "data/queues",
   relationshipStoreDir:
     process.env.RELATIONSHIP_STORE_DIR ?? "data/relationship-system",
+  simplePomdpStoreDir:
+    process.env.SIMPLE_POMDP_STORE_DIR ?? "data/simple-pomdp-system",
 });

@@ -22,7 +22,9 @@ export class DiscordBotApp {
     private readonly mentionChannelId: string,
     queueOrDiscordBotUserId?: QueueStore | string,
     discordBotUserIdOrQueue?: string | QueueStore,
-    private readonly onTurnRecorded?: (record: TurnRecordInput) => Promise<void>,
+    private readonly onTurnRecorded?: (
+      record: TurnRecordInput,
+    ) => Promise<void>,
     private readonly resolvePolicyPrompt?: (input: {
       botId: string;
       threadId: string;
@@ -57,7 +59,9 @@ export class DiscordBotApp {
         await this.enqueueUserTask(message.content, message);
         return;
       }
-      this.logInfo(`ignored channel=${message.channelId} reason=channel_mismatch`);
+      this.logInfo(
+        `ignored channel=${message.channelId} reason=channel_mismatch`,
+      );
     });
   }
 
@@ -91,12 +95,17 @@ export class DiscordBotApp {
       }
       this.sendTypingBestEffort(task.channelId);
       const mentionThreadId = `${task.channelId}:${task.authorId}`;
-      const mentionReply = await handleMention(this.identity, this.runtime, {
-        channelId: task.channelId,
-        authorId: task.authorId,
-        content: task.text,
-        mentionsBot: task.mentionsBot,
-      }, await this.resolveSystemPrompt(mentionThreadId, task.text));
+      const mentionReply = await handleMention(
+        this.identity,
+        this.runtime,
+        {
+          channelId: task.channelId,
+          authorId: task.authorId,
+          content: task.text,
+          mentionsBot: task.mentionsBot,
+        },
+        await this.resolveSystemPrompt(mentionThreadId, task.text),
+      );
       if (mentionReply) {
         await this.transport.sendMessage(task.channelId, mentionReply);
         await this.recordTurn(task, mentionReply);
@@ -142,7 +151,10 @@ export class DiscordBotApp {
     process.stdout.write(`[discord-bot-error] ${message}\n`);
   }
 
-  private async recordTurn(task: QueueTask, assistantContent: string): Promise<void> {
+  private async recordTurn(
+    task: QueueTask,
+    assistantContent: string,
+  ): Promise<void> {
     if (!this.onTurnRecorded) {
       return;
     }
@@ -156,7 +168,11 @@ export class DiscordBotApp {
             : `${task.channelId}:${task.authorId}`,
         messages: [
           { role: "user", content: task.text, timestampIso: timestamp },
-          { role: "assistant", content: assistantContent, timestampIso: timestamp },
+          {
+            role: "assistant",
+            content: assistantContent,
+            timestampIso: timestamp,
+          },
         ],
         createdAtIso: timestamp,
       });
@@ -180,6 +196,7 @@ export class DiscordBotApp {
         threadId,
         currentContext,
       });
+      console.log(`[resolveSystemPrompt] ${policyPrompt}`);
       if (!policyPrompt || policyPrompt.trim().length === 0) {
         return this.identity.systemPrompt;
       }
@@ -187,7 +204,9 @@ export class DiscordBotApp {
     } catch (error: unknown) {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
-      process.stdout.write(`[memory-system-error] policy resolve failed: ${message}\n`);
+      process.stdout.write(
+        `[memory-system-error] policy resolve failed: ${message}\n`,
+      );
       return this.identity.systemPrompt;
     }
   }

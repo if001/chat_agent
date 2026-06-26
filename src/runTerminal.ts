@@ -11,7 +11,7 @@ import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
-import { createRelationshipSystemClient } from "./infrastructure/relationship/relationshipSystemClient";
+import { createSimplePomdpSystemClient } from "./infrastructure/simple-pomdp/simplePomdpSystemClient";
 
 const main = async (): Promise<void> => {
   patchLangChainUuidV4();
@@ -73,15 +73,15 @@ const main = async (): Promise<void> => {
     ollamaModel: env.ollamaChatModel,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
-  const relationshipClient = createRelationshipSystemClient({
-    turnRecordDir: env.relationshipStoreDir,
+  const simplePomdpClient = createSimplePomdpSystemClient({
+    storeDir: env.simplePomdpStoreDir,
   });
   const app = new TerminalChatApp(
     identity,
     runtime,
     async (record) => {
       await memoryClient.ingestTurnRecord(record);
-      await relationshipClient.ingestTurnRecord(record);
+      await simplePomdpClient.ingestTurnRecord(record);
     },
     async ({ botId, threadId, currentContext }) => {
       const cards = await memoryClient.queryApplicablePolicyCards({
