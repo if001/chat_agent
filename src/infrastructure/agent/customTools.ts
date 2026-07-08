@@ -1,16 +1,13 @@
 import { tool } from "@langchain/core/tools";
+import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import { z } from "zod/v3";
 import {
   DailyEventRepository,
-  KnowledgeRepository,
   UserMemoryStore,
-  WebClient,
 } from "../../core/types";
-import { ArticleAnalysis } from "../../core/usecases/analyzeArticle";
 
 export interface CustomToolDeps {
-  knowledgeRepository: KnowledgeRepository;
-  webClient: WebClient;
+  knowledgeAccessService: KnowledgeAccessService;
   userMemoryStore: UserMemoryStore;
   dailyEventRepository?: DailyEventRepository;
   defaultUserId: string;
@@ -22,7 +19,6 @@ export interface CustomToolDeps {
     atIso?: string;
   }) => Promise<{ id: string; dueAt: string; type: "scheduled_once" | "scheduled_recurring" }>;
   getQueueStatus?: (input?: { limit?: number }) => Promise<unknown>;
-  analyzeArticle?: (input: { title: string; url: string; markdown: string }) => Promise<ArticleAnalysis>;
 }
 
 const schemaCompat = <T>(schema: T): T => schema;
@@ -37,7 +33,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const webListTool = tool(
     async ({ query, k }: { query: string; k: number }) => {
-      const results = await deps.webClient.webList(query, k);
+      const results = await deps.knowledgeAccessService.webList({
+        query,
+        limit: k,
+      });
       return JSON.stringify({ query, k, results });
     },
     {
@@ -52,7 +51,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const webPageTool = tool(
     async ({ url }: { url: string }) => {
-      const page = await deps.webClient.webPage(url);
+      const page = await deps.knowledgeAccessService.webPage({ url });
       return JSON.stringify(page);
     },
     {
@@ -66,7 +65,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const searchSavedKnowledgeTool = tool(
     async ({ query, limit, minScore }: { query: string; limit?: number; minScore?: number }) => {
-      const results = await deps.knowledgeRepository.searchSavedKnowledge(query, {
+      const results = await deps.knowledgeAccessService.searchSavedKnowledge({
+        query,
         ...(limit ? { limit } : {}),
         ...(minScore !== undefined ? { minScore } : {}),
       });
@@ -88,9 +88,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       if (!articleId && !url) {
         return JSON.stringify({ error: "articleId or url is required" });
       }
-      const article = articleId
-        ? await deps.knowledgeRepository.getSavedArticleById(articleId)
-        : await deps.knowledgeRepository.getSavedArticleByUrl(url ?? "");
+      const article = await deps.knowledgeAccessService.getSavedArticle({
+        ...(articleId ? { articleId } : {}),
+        ...(url ? { url } : {}),
+      });
       if (!article) {
         return JSON.stringify(null);
       }
@@ -120,31 +121,14 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const saveWebKnowledgeTool = tool(
     async ({ url }: { url: string }) => {
-      const page = await deps.webClient.webPage(url);
-      const analysis = deps.analyzeArticle
-        ? await deps.analyzeArticle({
-            title: page.title,
-            url: page.url,
-            markdown: page.markdown,
-          })
-        : {
-            summary: summarizeMarkdown(page.markdown),
-            content: summarizeMarkdown(page.markdown),
-            tags: [] as string[],
-          };
-      const saved = await deps.knowledgeRepository.saveArticle({
-        url: page.url,
-        title: page.title,
-        summary: analysis.summary,
-        content: analysis.content,
-        tags: analysis.tags,
-        rawMarkdown: page.markdown,
+      const saved = await deps.knowledgeAccessService.saveWebKnowledge({
+        botId: deps.botId,
+        url,
       });
       return JSON.stringify({
-        articleId: saved.id,
+        articleId: saved.articleId,
         title: saved.title,
         summary: saved.summary,
-        tags: saved.tags,
         url: saved.url,
       });
     },
@@ -360,9 +344,4 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     enqueueTaskTool,
     getQueueStatusTool,
   ];
-};
-
-const summarizeMarkdown = (markdown: string): string => {
-  const trimmed = markdown.replace(/\s+/g, " ").trim();
-  return trimmed.length <= 280 ? trimmed : `${trimmed.slice(0, 277)}...`;
 };

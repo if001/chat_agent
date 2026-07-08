@@ -2,61 +2,82 @@ import { createCustomTools } from "./customTools";
 import {
   DailyEvent,
   DailyEventRepository,
-  KnowledgeRepository,
+  UserMemoryStore,
+} from "../../core/types";
+import {
+  KnowledgeAccessService,
   SavedArticle,
   SearchResultItem,
-  UserMemoryStore,
-  WebClient,
   WebListItem,
   WebPage,
-} from "../../core/types";
+} from "@chat-agent/knowledge-access";
 
-class KnowledgeRepoStub implements KnowledgeRepository {
-  public savedArticleInput: Omit<SavedArticle, "id" | "createdAt"> | null = null;
+class KnowledgeAccessServiceStub implements KnowledgeAccessService {
+  public savedWebKnowledgeInput: { botId: string; threadId?: string; url: string } | null = null;
 
-  async saveArticle(article: Omit<SavedArticle, "id" | "createdAt">): Promise<SavedArticle> {
-    this.savedArticleInput = article;
-    return { ...article, id: "a1", createdAt: new Date("2026-01-01T00:00:00.000Z") };
-  }
-
-  async getSavedArticleById(articleId: string): Promise<SavedArticle | null> {
-    return {
-      id: articleId,
-      url: "https://example.com",
-      title: "t",
-      summary: "s",
-      content: "c",
-      tags: ["tag1"],
-      rawMarkdown: "m",
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
-    };
-  }
-
-  async getSavedArticleByUrl(url: string): Promise<SavedArticle | null> {
-    return {
-      id: "a-by-url",
-      url,
-      title: "tu",
-      summary: "su",
-      content: "cu",
-      tags: ["tagu"],
-      rawMarkdown: "mu",
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
-    };
-  }
-
-  async searchSavedKnowledge(_query: string): Promise<SearchResultItem[]> {
+  async searchSavedKnowledge(_input: {
+    query: string;
+    limit?: number;
+    minScore?: number;
+  }): Promise<SearchResultItem[]> {
     return [{ articleId: "a1", score: 0.9, title: "t", summary: "s", tags: ["tag1"], url: "https://example.com" }];
   }
-}
 
-class WebClientStub implements WebClient {
-  async webList(query: string, k: number): Promise<WebListItem[]> {
-    return [{ rank: 1, title: `${query}-${k}`, url: "https://example.com", snippet: "snip" }];
+  async getSavedArticle(input: { articleId?: string; url?: string }): Promise<SavedArticle | null> {
+    if (input.articleId) {
+      return {
+        id: input.articleId,
+        url: "https://example.com",
+        title: "t",
+        summary: "s",
+        content: "c",
+        tags: ["tag1"],
+        rawMarkdown: "m",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      };
+    }
+    if (input.url) {
+      return {
+        id: "a-by-url",
+        url: input.url,
+        title: "tu",
+        summary: "su",
+        content: "cu",
+        tags: ["tagu"],
+        rawMarkdown: "mu",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      };
+    }
+    return null;
   }
 
-  async webPage(url: string): Promise<WebPage> {
-    return { url, title: "t", markdown: "m" };
+  async webList(input: { query: string; limit: number }): Promise<WebListItem[]> {
+    return [
+      {
+        rank: 1,
+        title: `${input.query}-${input.limit}`,
+        url: "https://example.com",
+        snippet: "snip",
+      },
+    ];
+  }
+
+  async webPage(input: { url: string }): Promise<WebPage> {
+    return { url: input.url, title: "t", markdown: "m" };
+  }
+
+  async saveWebKnowledge(input: {
+    botId: string;
+    threadId?: string;
+    url: string;
+  }): Promise<{ articleId: string; title: string; summary: string; url: string }> {
+    this.savedWebKnowledgeInput = input;
+    return {
+      articleId: "a1",
+      title: "t",
+      summary: "generated summary",
+      url: input.url,
+    };
   }
 }
 
@@ -130,8 +151,7 @@ class DailyEventRepoStub implements DailyEventRepository {
 }
 
 const createDeps = () => ({
-  knowledgeRepository: new KnowledgeRepoStub(),
-  webClient: new WebClientStub(),
+  knowledgeAccessService: new KnowledgeAccessServiceStub(),
   userMemoryStore: new MemoryStoreStub(),
   dailyEventRepository: new DailyEventRepoStub(),
   defaultUserId: "u1",
@@ -167,24 +187,16 @@ test("web_page returns page payload", async () => {
 
 test("save_web_knowledge fetches and stores article", async () => {
   const deps = createDeps();
-  const repo = deps.knowledgeRepository as KnowledgeRepoStub;
-  const tools = createCustomTools({
-    ...deps,
-    analyzeArticle: async () => ({
-      summary: "generated summary",
-      content: "generated content",
-      tags: ["ai", "agents"],
-    }),
-  });
+  const service = deps.knowledgeAccessService as KnowledgeAccessServiceStub;
+  const tools = createCustomTools(deps);
 
   const result = await findTool(tools, "save_web_knowledge").invoke({ url: "https://example.com/page" });
-  const parsed = JSON.parse(result as string) as { articleId: string; summary: string; tags: string[] };
+  const parsed = JSON.parse(result as string) as { articleId: string; summary: string; url: string };
   expect(parsed.articleId).toBe("a1");
   expect(parsed.summary).toBe("generated summary");
-  expect(parsed.tags).toEqual(["ai", "agents"]);
-  expect(repo.savedArticleInput?.url).toBe("https://example.com/page");
-  expect(repo.savedArticleInput?.content).toBe("generated content");
-  expect(repo.savedArticleInput?.tags).toEqual(["ai", "agents"]);
+  expect(parsed.url).toBe("https://example.com/page");
+  expect(service.savedWebKnowledgeInput?.botId).toBe("b1");
+  expect(service.savedWebKnowledgeInput?.url).toBe("https://example.com/page");
 });
 
 test("search_saved_knowledge returns search results", async () => {

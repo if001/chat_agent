@@ -1,9 +1,13 @@
 import { createCustomTools } from "./customTools";
-import { SimpleWebClient } from "../web/simpleWebClient";
 import {
+  createKnowledgeAccessService,
+  KnowledgeAccessAnalysisModel,
   KnowledgeRepository,
   SavedArticle,
   SearchResultItem,
+  SimpleWebClient,
+} from "@chat-agent/knowledge-access";
+import {
   UserMemoryStore,
 } from "../../core/types";
 
@@ -82,9 +86,22 @@ integrationTest(
     }
 
     const repository = new InMemoryKnowledgeRepo();
-    const tools = createCustomTools({
-      knowledgeRepository: repository,
+    const analysisModel: KnowledgeAccessAnalysisModel = {
+      async generateJson() {
+        return {
+          summary: "integration summary",
+          content: "integration content",
+          tags: ["integration"],
+        };
+      },
+    };
+    const knowledgeAccessService = createKnowledgeAccessService({
+      repository,
       webClient: new SimpleWebClient(baseUrl),
+      analysisModel,
+    });
+    const tools = createCustomTools({
+      knowledgeAccessService,
       userMemoryStore: new InMemoryUserMemoryStore(),
       defaultUserId: "u1",
       botId: "b1",

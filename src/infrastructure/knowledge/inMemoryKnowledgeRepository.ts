@@ -1,4 +1,9 @@
-import { KnowledgeRepository, SavedArticle, SearchKnowledgeOptions, SearchResultItem } from "../../core/types";
+import {
+  KnowledgeRepository,
+  SavedArticle,
+  SearchKnowledgeOptions,
+  SearchResultItem,
+} from "@chat-agent/knowledge-access";
 
 export class InMemoryKnowledgeRepository implements KnowledgeRepository {
   private readonly byId = new Map<string, SavedArticle>();

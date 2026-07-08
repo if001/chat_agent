@@ -1,18 +1,21 @@
 import { Client, GatewayIntentBits } from "discord.js";
+import {
+  createDrizzleClient,
+  createKnowledgeAccessService,
+  createOllamaKnowledgeAccessAnalysisModel,
+  createPostgresPool,
+  OllamaEmbeddingProvider,
+  PostgresKnowledgeRepository,
+  SimpleWebClient,
+} from "@chat-agent/knowledge-access";
 import { DiscordBotApp } from "./ui/discord/discordBotApp";
 import { DeepAgentRuntime } from "./infrastructure/agent/deepAgentRuntime";
-import { SimpleWebClient } from "./infrastructure/web/simpleWebClient";
 import { loadEnv } from "./config/env";
 import { DiscordJsTransport } from "./infrastructure/discord/discordJsTransport";
-import { createPostgresPool } from "./infrastructure/db/postgresPool";
-import { createDrizzleClient } from "./infrastructure/db/drizzleClient";
-import { PostgresKnowledgeRepository } from "./infrastructure/db/postgresKnowledgeRepository";
-import { OllamaEmbeddingProvider } from "./infrastructure/memory/ollamaEmbeddingProvider";
 import {
   createOllamaChatModel,
   createOllamaChatModelCloud,
 } from "./infrastructure/agent/ollamaChatModel";
-import { SimpleChatRuntime } from "./infrastructure/agent/simpleChatRuntime";
 import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
@@ -21,7 +24,6 @@ import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { FileQueueStore } from "./queue/fileQueueStore";
 import { join } from "node:path";
-import { analyzeArticle } from "./core/usecases/analyzeArticle";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
 import { createSimplePomdpSystemClient } from "./infrastructure/simple-pomdp/simplePomdpSystemClient";
@@ -66,7 +68,6 @@ const main = async (): Promise<void> => {
         env.ollamaApiKey,
       )
     : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
-  const articleAnalyzerRuntime = new SimpleChatRuntime(chatModel);
 
   const pool = createPostgresPool(env.postgresUrl);
   const db = createDrizzleClient(pool);
@@ -97,12 +98,21 @@ const main = async (): Promise<void> => {
   });
 
   const webClient = new SimpleWebClient(env.simpleClientBaseUrl);
+  const analysisModel = createOllamaKnowledgeAccessAnalysisModel(
+    env.ollamaBaseUrl,
+    env.ollamaChatModel,
+    env.ollamaApiKey,
+  );
+  const knowledgeAccessService = createKnowledgeAccessService({
+    repository,
+    webClient,
+    analysisModel,
+  });
   const queueStore = new FileQueueStore(
     join(env.queueDir, `${identity.botId}.json`),
   );
   const tools = createCustomTools({
-    knowledgeRepository: repository,
-    webClient,
+    knowledgeAccessService,
     userMemoryStore,
     dailyEventRepository,
     defaultUserId: "discord-user",
@@ -128,14 +138,6 @@ const main = async (): Promise<void> => {
     },
     getQueueStatus: async ({ limit } = {}) =>
       queueStore.getStatus(new Date(), limit ?? 5),
-    analyzeArticle: async ({ title, url, markdown }) =>
-      analyzeArticle(
-        articleAnalyzerRuntime,
-        identity.botId,
-        title,
-        url,
-        markdown,
-      ),
   });
 
   const runtime = new DeepAgentRuntime(

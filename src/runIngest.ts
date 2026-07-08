@@ -1,15 +1,17 @@
 import { Client, GatewayIntentBits } from "discord.js";
+import {
+  createDrizzleClient,
+  createKnowledgeAccessService,
+  createOllamaKnowledgeAccessAnalysisModel,
+  createPostgresPool,
+  OllamaEmbeddingProvider,
+  PostgresKnowledgeRepository,
+  SimpleWebClient,
+} from "@chat-agent/knowledge-access";
 import { loadEnv } from "./config/env";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { DiscordJsTransport } from "./infrastructure/discord/discordJsTransport";
-import { createPostgresPool } from "./infrastructure/db/postgresPool";
-import { createDrizzleClient } from "./infrastructure/db/drizzleClient";
-import { PostgresKnowledgeRepository } from "./infrastructure/db/postgresKnowledgeRepository";
-import { OllamaEmbeddingProvider } from "./infrastructure/memory/ollamaEmbeddingProvider";
-import { SimpleWebClient } from "./infrastructure/web/simpleWebClient";
 import { DiscordIngestApp } from "./ui/discord/discordIngestApp";
-import { SimpleChatRuntime } from "./infrastructure/agent/simpleChatRuntime";
-import { createOllamaChatModel, createOllamaChatModelCloud } from "./infrastructure/agent/ollamaChatModel";
 
 const main = async (): Promise<void> => {
   const env = loadEnv();
@@ -25,15 +27,6 @@ const main = async (): Promise<void> => {
     ),
   };
 
-  const chatModel = env.ollamaApiKey
-    ? createOllamaChatModelCloud(
-        env.ollamaBaseUrl,
-        env.ollamaChatModel,
-        env.ollamaApiKey,
-      )
-    : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
-  const runtime = new SimpleChatRuntime(chatModel);
-
   const pool = createPostgresPool(env.postgresUrl);
   const db = createDrizzleClient(pool);
   const embeddingProvider = new OllamaEmbeddingProvider(
@@ -42,6 +35,16 @@ const main = async (): Promise<void> => {
   );
   const repository = new PostgresKnowledgeRepository(db, embeddingProvider);
   const webClient = new SimpleWebClient(env.simpleClientBaseUrl);
+  const analysisModel = createOllamaKnowledgeAccessAnalysisModel(
+    env.ollamaBaseUrl,
+    env.ollamaChatModel,
+    env.ollamaApiKey,
+  );
+  const knowledgeAccessService = createKnowledgeAccessService({
+    repository,
+    webClient,
+    analysisModel,
+  });
 
   const discordClient = new Client({
     intents: [
@@ -53,9 +56,7 @@ const main = async (): Promise<void> => {
   const transport = new DiscordJsTransport(discordClient);
   const app = new DiscordIngestApp(
     identity,
-    runtime,
-    repository,
-    webClient,
+    knowledgeAccessService,
     transport,
     env.ingestChannelId,
   );

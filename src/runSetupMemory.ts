@@ -1,7 +1,7 @@
 import { loadEnv } from "./config/env";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
-import { OllamaEmbeddingProvider } from "./infrastructure/memory/ollamaEmbeddingProvider";
+import { OllamaEmbeddingProvider } from "@chat-agent/knowledge-access";
 
 const main = async (): Promise<void> => {
   const env = loadEnv();

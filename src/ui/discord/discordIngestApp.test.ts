@@ -1,51 +1,56 @@
 import { DiscordIngestApp } from "./discordIngestApp";
 import { DiscordTransport } from "./discordBotApp";
-import { AgentRuntime, BotIdentity, ChannelMessage, KnowledgeRepository, SavedArticle, WebClient, WebPage } from "../../core/types";
+import { BotIdentity, ChannelMessage } from "../../core/types";
+import { KnowledgeAccessService, SavedArticle, SearchResultItem, WebListItem, WebPage } from "@chat-agent/knowledge-access";
 
-class RuntimeStub implements AgentRuntime {
-  async respond(): Promise<{ content: string }> {
-    return { content: "summary text" };
-  }
-}
-
-class WebClientStub implements WebClient {
+class KnowledgeAccessServiceStub implements KnowledgeAccessService {
   constructor(private readonly failUrls: Set<string> = new Set()) {}
 
-  async webList(): Promise<never[]> {
+  async searchSavedKnowledge(_input: {
+    query: string;
+    limit?: number;
+    minScore?: number;
+  }): Promise<SearchResultItem[]> {
     return [];
   }
 
-  async webPage(url: string): Promise<WebPage> {
-    if (this.failUrls.has(url)) {
-      throw new Error(`failed to fetch ${url}`);
+  async getSavedArticle(_input: {
+    articleId?: string;
+    url?: string;
+  }): Promise<SavedArticle | null> {
+    return null;
+  }
+
+  async webList(_input: {
+    query: string;
+    limit: number;
+  }): Promise<WebListItem[]> {
+    return [];
+  }
+
+  async webPage(input: { url: string }): Promise<WebPage> {
+    if (this.failUrls.has(input.url)) {
+      throw new Error(`failed to fetch ${input.url}`);
     }
     return {
-      url,
+      url: input.url,
       title: "Readme",
       markdown: "Long markdown",
     };
   }
-}
 
-class RepoStub implements KnowledgeRepository {
-  async saveArticle(article: Omit<SavedArticle, "id" | "createdAt">): Promise<SavedArticle> {
+  async saveWebKnowledge(input: {
+    botId: string;
+    threadId?: string;
+    url: string;
+  }): Promise<{ articleId: string; title: string; summary: string; url: string }> {
+    const page = await this.webPage({ url: input.url });
     return {
-      ...article,
-      id: "article_1",
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      articleId: "article_1",
+      title: page.title,
+      summary: "summary text",
+      url: page.url,
     };
-  }
-
-  async getSavedArticleById(): Promise<SavedArticle | null> {
-    return null;
-  }
-
-  async getSavedArticleByUrl(): Promise<SavedArticle | null> {
-    return null;
-  }
-
-  async searchSavedKnowledge(): Promise<never[]> {
-    return [];
   }
 }
 
@@ -83,9 +88,7 @@ test("ingests url and posts summary in ingest channel", async () => {
   const transport = new TransportStub();
   const app = new DiscordIngestApp(
     identity,
-    new RuntimeStub(),
-    new RepoStub(),
-    new WebClientStub(),
+    new KnowledgeAccessServiceStub(),
     transport,
     "ingest-channel",
   );
@@ -107,9 +110,7 @@ test("ignores messages outside ingest channel", async () => {
   const transport = new TransportStub();
   const app = new DiscordIngestApp(
     identity,
-    new RuntimeStub(),
-    new RepoStub(),
-    new WebClientStub(),
+    new KnowledgeAccessServiceStub(),
     transport,
     "ingest-channel",
   );
@@ -131,9 +132,7 @@ test("reports ingest errors and continues processing", async () => {
   const logs: string[] = [];
   const app = new DiscordIngestApp(
     identity,
-    new RuntimeStub(),
-    new RepoStub(),
-    new WebClientStub(new Set(["https://example.com/fail"])),
+    new KnowledgeAccessServiceStub(new Set(["https://example.com/fail"])),
     transport,
     "ingest-channel",
     (message) => {
