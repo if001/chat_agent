@@ -1,40 +1,33 @@
+import { createQueueApi, FileQueueStore } from "@chat-agent/queue";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { FileQueueStore } from "./fileQueueStore";
 
 const createPath = () => join(tmpdir(), `queue_test_${Date.now()}_${Math.floor(Math.random() * 1000)}.json`);
 
 test("dequeue prioritizes user over scheduled tasks", async () => {
   const path = createPath();
-  const queue = new FileQueueStore(path);
+  const queue = createQueueApi(new FileQueueStore(path));
   const now = new Date();
 
-  await queue.enqueue({
-    type: "scheduled_once",
-    action: "agent_input",
-    text: "once",
+  await queue.enqueueScheduledInput({
+    botId: "bot-1",
     channelId: "c1",
-    authorId: "u1",
-    mentionsBot: false,
+    text: "once",
     dueAt: now,
   });
-  await queue.enqueue({
-    type: "scheduled_recurring",
-    action: "agent_input",
-    text: "recurring",
+  await queue.enqueueScheduledInput({
+    botId: "bot-1",
     channelId: "c1",
-    authorId: "u1",
-    mentionsBot: false,
+    text: "recurring",
     dueAt: now,
     intervalMinutes: 180,
   });
-  await queue.enqueue({
-    type: "user",
-    action: "mention",
-    text: "user",
+  await queue.enqueueMention({
+    botId: "bot-1",
+    userId: "u1",
     channelId: "c1",
-    authorId: "u1",
+    text: "user",
     mentionsBot: true,
     dueAt: now,
   });
@@ -59,16 +52,13 @@ test("dequeue prioritizes user over scheduled tasks", async () => {
 
 test("ack keeps recurring task and reschedules dueAt", async () => {
   const path = createPath();
-  const queue = new FileQueueStore(path);
+  const queue = createQueueApi(new FileQueueStore(path));
   const now = new Date();
 
-  await queue.enqueue({
-    type: "scheduled_recurring",
-    action: "agent_input",
-    text: "repeat",
+  await queue.enqueueScheduledInput({
+    botId: "bot-1",
     channelId: "c1",
-    authorId: "u1",
-    mentionsBot: false,
+    text: "repeat",
     dueAt: now,
     intervalMinutes: 60,
   });

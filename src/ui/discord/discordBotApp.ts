@@ -1,6 +1,6 @@
 import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
+import { createInMemoryQueueApi, QueueApi, QueueTask } from "@chat-agent/queue";
 import { handleMention } from "../../core/usecases/handleMention";
-import { QueueStore, QueueTask } from "../../queue/types";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
@@ -12,7 +12,7 @@ export interface DiscordTransport {
 }
 
 export class DiscordBotApp {
-  private readonly queueStore: QueueStore;
+  private readonly queueApi: QueueApi;
   private readonly worker: QueueWorker;
 
   constructor(
@@ -20,8 +20,8 @@ export class DiscordBotApp {
     private readonly runtime: AgentRuntime,
     private readonly transport: DiscordTransport,
     private readonly mentionChannelId: string,
-    queueOrDiscordBotUserId?: QueueStore | string,
-    discordBotUserIdOrQueue?: string | QueueStore,
+    queueOrDiscordBotUserId?: QueueApi | string,
+    discordBotUserIdOrQueue?: string | QueueApi,
     private readonly onTurnRecorded?: (
       record: TurnRecordInput,
     ) => Promise<void>,
@@ -31,7 +31,7 @@ export class DiscordBotApp {
       currentContext: string;
     }) => Promise<string | undefined>,
   ) {
-    const queue = resolveQueueStore(
+    const queueApi = resolveQueueApi(
       queueOrDiscordBotUserId,
       discordBotUserIdOrQueue,
     );
@@ -39,9 +39,9 @@ export class DiscordBotApp {
       queueOrDiscordBotUserId,
       discordBotUserIdOrQueue,
     );
-    this.queueStore = queue ?? createInlineQueue();
+    this.queueApi = queueApi ?? createInlineQueueApi();
     this.worker = new QueueWorker(
-      this.queueStore,
+      this.queueApi,
       (task) => this.processTask(task),
       1_000,
     );
@@ -71,12 +71,11 @@ export class DiscordBotApp {
   ): Promise<void> {
     const sanitizedText = sanitizeDiscordInput(text, this.discordBotUserId);
     const formattedText = formatAgentUserInput(sanitizedText);
-    const task = await this.queueStore.enqueue({
-      type: "user",
-      action: "mention",
-      text: formattedText,
+    const task = await this.queueApi.enqueueMention({
+      botId: this.identity.botId,
+      userId: message.authorId,
       channelId: message.channelId,
-      authorId: message.authorId,
+      text: formattedText,
       mentionsBot: message.mentionsBot,
       dueAt: new Date(),
     });
@@ -94,7 +93,6 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
-      const mentionThreadId = `${task.channelId}:${task.authorId}`;
       const mentionReply = await handleMention(
         this.identity,
         this.runtime,
@@ -104,7 +102,7 @@ export class DiscordBotApp {
           content: task.text,
           mentionsBot: task.mentionsBot,
         },
-        await this.resolveSystemPrompt(mentionThreadId, task.text),
+        await this.resolveSystemPrompt(task.targetThreadId, task.text),
       );
       if (mentionReply) {
         await this.transport.sendMessage(task.channelId, mentionReply);
@@ -118,7 +116,7 @@ export class DiscordBotApp {
 
     if (task.action === "agent_input") {
       this.sendTypingBestEffort(task.channelId);
-      const threadId = `${task.channelId}:scheduled`;
+      const threadId = task.targetThreadId;
       const result = await this.runtime.respond({
         botId: this.identity.botId,
         systemPrompt: await this.resolveSystemPrompt(threadId, task.text),
@@ -162,10 +160,7 @@ export class DiscordBotApp {
     try {
       await this.onTurnRecorded({
         botId: this.identity.botId,
-        threadId:
-          task.action === "agent_input"
-            ? `${task.channelId}:scheduled`
-            : `${task.channelId}:${task.authorId}`,
+        threadId: task.targetThreadId,
         messages: [
           { role: "user", content: task.text, timestampIso: timestamp },
           {
@@ -228,10 +223,10 @@ const sanitizeDiscordInput = (
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const resolveQueueStore = (
-  first?: QueueStore | string,
-  second?: QueueStore | string,
-): QueueStore | undefined => {
+const resolveQueueApi = (
+  first?: QueueApi | string,
+  second?: QueueApi | string,
+): QueueApi | undefined => {
   if (typeof first === "object") {
     return first;
   }
@@ -242,8 +237,8 @@ const resolveQueueStore = (
 };
 
 const resolveDiscordBotUserId = (
-  first?: QueueStore | string,
-  second?: QueueStore | string,
+  first?: QueueApi | string,
+  second?: QueueApi | string,
 ): string | undefined => {
   if (typeof first === "string") {
     return first;
@@ -254,56 +249,4 @@ const resolveDiscordBotUserId = (
   return undefined;
 };
 
-const createInlineQueue = (): QueueStore => {
-  const items: QueueTask[] = [];
-  return {
-    enqueue: async (input) => {
-      const task: QueueTask = {
-        id: `inline_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-        type: input.type,
-        action: input.action,
-        text: input.text,
-        channelId: input.channelId,
-        authorId: input.authorId,
-        mentionsBot: input.mentionsBot,
-        dueAt: input.dueAt.toISOString(),
-        ...(input.intervalMinutes
-          ? { intervalMinutes: input.intervalMinutes }
-          : {}),
-        createdAt: new Date().toISOString(),
-        locked: false,
-      };
-      items.push(task);
-      return task;
-    },
-    dequeueReady: async (now) => {
-      const idx = items.findIndex(
-        (it) => !it.locked && new Date(it.dueAt).getTime() <= now.getTime(),
-      );
-      if (idx < 0) {
-        return null;
-      }
-      const current = items[idx];
-      if (!current) {
-        return null;
-      }
-      items[idx] = { ...current, locked: true };
-      return items[idx] ?? null;
-    },
-    ack: async (id) => {
-      const idx = items.findIndex((it) => it.id === id);
-      if (idx >= 0) {
-        items.splice(idx, 1);
-      }
-    },
-    release: async (id) => {
-      const idx = items.findIndex((it) => it.id === id);
-      if (idx >= 0) {
-        const current = items[idx];
-        if (current) {
-          items[idx] = { ...current, locked: false };
-        }
-      }
-    },
-  };
-};
+const createInlineQueueApi = (): QueueApi => createInMemoryQueueApi();

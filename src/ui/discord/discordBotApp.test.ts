@@ -1,6 +1,6 @@
+import { QueueApi, QueueTask } from "@chat-agent/queue";
 import { DiscordBotApp, DiscordTransport } from "./discordBotApp";
 import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
-import { QueueStore, QueueTask } from "../../queue/types";
 
 const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 
@@ -221,24 +221,47 @@ test("still replies when policy resolver fails", async () => {
 test("injects memory policy context for scheduled agent input", async () => {
   const task: QueueTask = {
     id: "scheduled-1",
-    type: "agent",
+    type: "scheduled_once",
     action: "agent_input",
     text: "scheduled check-in",
     channelId: "mention-channel",
+    targetThreadId: "mention-channel:user-1",
     dueAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     locked: false,
   };
   let dequeueCount = 0;
 
-  const queue: QueueStore = {
-    enqueue: async () => task,
+  const queue: QueueApi = {
+    enqueueMention: async () => {
+      throw new Error("not used");
+    },
+    enqueueConversationInput: async () => task,
+    enqueueScheduledInput: async () => task,
     dequeueReady: async () => {
       dequeueCount += 1;
       return dequeueCount === 1 ? { ...task, locked: true } : null;
     },
     ack: async () => undefined,
     release: async () => undefined,
+    getStatus: async () => ({
+      now: new Date().toISOString(),
+      counts: {
+        total: 0,
+        locked: 0,
+        byType: {
+          user: 0,
+          scheduled_recurring: 0,
+          scheduled_once: 0,
+        },
+        readyByType: {
+          user: 0,
+          scheduled_recurring: 0,
+          scheduled_once: 0,
+        },
+      },
+      next: [],
+    }),
   };
 
   const transport = new TransportStub();
@@ -468,6 +491,7 @@ test("does not send a duplicate reply when ack fails after a successful response
     action: "mention",
     text: formatUserMessage("first"),
     channelId: "mention-channel",
+    targetThreadId: "mention-channel:user-1",
     authorId: "user-1",
     mentionsBot: true,
     dueAt: new Date().toISOString(),
@@ -476,8 +500,14 @@ test("does not send a duplicate reply when ack fails after a successful response
   };
   let dequeueCount = 0;
 
-  const queue: QueueStore = {
-    enqueue: async () => task,
+  const queue: QueueApi = {
+    enqueueMention: async () => task,
+    enqueueConversationInput: async () => {
+      throw new Error("not used");
+    },
+    enqueueScheduledInput: async () => {
+      throw new Error("not used");
+    },
     dequeueReady: async () => {
       dequeueCount += 1;
       return dequeueCount === 1 ? { ...task, locked: true } : null;
@@ -488,6 +518,24 @@ test("does not send a duplicate reply when ack fails after a successful response
     release: async () => {
       throw new Error("release must not be called");
     },
+    getStatus: async () => ({
+      now: new Date().toISOString(),
+      counts: {
+        total: 0,
+        locked: 0,
+        byType: {
+          user: 0,
+          scheduled_recurring: 0,
+          scheduled_once: 0,
+        },
+        readyByType: {
+          user: 0,
+          scheduled_recurring: 0,
+          scheduled_once: 0,
+        },
+      },
+      next: [],
+    }),
   };
 
   const transport = new TransportStub();

@@ -8,6 +8,10 @@ import {
   PostgresKnowledgeRepository,
   SimpleWebClient,
 } from "@chat-agent/knowledge-access";
+import {
+  createQueueApi,
+  FileQueueStore,
+} from "@chat-agent/queue";
 import { DiscordBotApp } from "./ui/discord/discordBotApp";
 import { DeepAgentRuntime } from "./infrastructure/agent/deepAgentRuntime";
 import { loadEnv } from "./config/env";
@@ -22,7 +26,6 @@ import { PostgresDailyEventRepository } from "./infrastructure/daily-events/post
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
-import { FileQueueStore } from "./queue/fileQueueStore";
 import { join } from "node:path";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
@@ -111,6 +114,7 @@ const main = async (): Promise<void> => {
   const queueStore = new FileQueueStore(
     join(env.queueDir, `${identity.botId}.json`),
   );
+  const queueApi = createQueueApi(queueStore);
   const tools = createCustomTools({
     knowledgeAccessService,
     userMemoryStore,
@@ -123,21 +127,17 @@ const main = async (): Promise<void> => {
         : new Date(
             Date.now() + (delayMinutes ?? everyMinutes ?? 60) * 60 * 1000,
           );
-      const type = everyMinutes ? "scheduled_recurring" : "scheduled_once";
-      const task = await queueStore.enqueue({
-        type,
-        action: "agent_input",
-        text,
+      const task = await queueApi.enqueueScheduledInput({
+        botId: identity.botId,
         channelId: env.mentionChannelId,
-        authorId: "agent",
-        mentionsBot: false,
+        text,
         dueAt,
         ...(everyMinutes ? { intervalMinutes: everyMinutes } : {}),
       });
-      return { id: task.id, dueAt: task.dueAt, type };
+      return { id: task.id, dueAt: task.dueAt, type: task.type };
     },
     getQueueStatus: async ({ limit } = {}) =>
-      queueStore.getStatus(new Date(), limit ?? 5),
+      queueApi.getStatus(new Date(), limit ?? 5),
   });
 
   const runtime = new DeepAgentRuntime(
@@ -189,7 +189,7 @@ const main = async (): Promise<void> => {
     runtime,
     transport,
     env.mentionChannelId,
-    queueStore,
+    queueApi,
     env.discordBotUserId,
     async (record) => {
       await memoryClient.ingestTurnRecord(record);

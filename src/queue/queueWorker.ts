@@ -1,4 +1,4 @@
-import { QueueStore, QueueTask } from "./types";
+import { QueueStore, QueueTask } from "@chat-agent/queue";
 
 export class QueueWorker {
   private timer: NodeJS.Timeout | null = null;

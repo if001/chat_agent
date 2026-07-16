@@ -1,5 +1,5 @@
+import { QueueStore, QueueTask } from "@chat-agent/queue";
 import { QueueWorker } from "./queueWorker";
-import { QueueStore, QueueTask } from "./types";
 
 const createTask = (id: string, text: string): QueueTask => ({
   id,
@@ -7,6 +7,7 @@ const createTask = (id: string, text: string): QueueTask => ({
   action: "mention",
   text,
   channelId: "c1",
+  targetThreadId: "c1:u1",
   authorId: "u1",
   mentionsBot: true,
   dueAt: new Date().toISOString(),
@@ -22,9 +23,6 @@ test("processes queued tasks sequentially when a new task arrives during process
   const finished: string[] = [];
 
   const queue: QueueStore = {
-    enqueue: async () => {
-      throw new Error("not used");
-    },
     dequeueReady: async () => {
       const next = tasks.shift();
       return next ?? null;
@@ -72,9 +70,6 @@ test("does not re-run a handled task when ack fails", async () => {
   const handled: string[] = [];
 
   const queue: QueueStore = {
-    enqueue: async () => {
-      throw new Error("not used");
-    },
     dequeueReady: async () => {
       dequeueCount += 1;
       return dequeueCount === 1 ? task : null;
