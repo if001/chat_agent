@@ -9,6 +9,7 @@ interface TurnMessage {
 export interface TurnRecordInput {
   botId: string;
   threadId: string;
+  source?: "user" | "simple_pomdp" | "scheduled" | "unknown";
   messages: TurnMessage[];
   createdAtIso: string;
 }
@@ -23,11 +24,9 @@ interface MemorySystemService {
   }): Promise<
     Array<{
       id: string;
-      title: string;
-      appliesWhen: string;
-      recommendedBehavior: string;
-      avoidBehavior: string;
-      distinctionNotes: string;
+      state: string;
+      action: string;
+      outcome: string;
       confidence: "low" | "medium" | "high";
     }>
   >;
@@ -35,11 +34,9 @@ interface MemorySystemService {
 
 export interface MemoryPolicyCard {
   id: string;
-  title: string;
-  appliesWhen: string;
-  recommendedBehavior: string;
-  avoidBehavior: string;
-  distinctionNotes: string;
+  state: string;
+  action: string;
+  outcome: string;
   confidence: "low" | "medium" | "high";
 }
 

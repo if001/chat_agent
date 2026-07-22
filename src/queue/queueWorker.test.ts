@@ -8,6 +8,7 @@ const createTask = (id: string, text: string): QueueTask => ({
   text,
   channelId: "c1",
   targetThreadId: "c1:u1",
+  source: "user",
   authorId: "u1",
   mentionsBot: true,
   dueAt: new Date().toISOString(),
