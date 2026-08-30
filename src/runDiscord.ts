@@ -8,10 +8,7 @@ import {
   PostgresKnowledgeRepository,
   SimpleWebClient,
 } from "@chat-agent/knowledge-access";
-import {
-  createQueueApi,
-  FileQueueStore,
-} from "@chat-agent/queue";
+import { createQueueApi, FileQueueStore } from "@chat-agent/queue";
 import { DiscordBotApp } from "./ui/discord/discordBotApp";
 import { DeepAgentRuntime } from "./infrastructure/agent/deepAgentRuntime";
 import { loadEnv } from "./config/env";
@@ -205,12 +202,20 @@ const main = async (): Promise<void> => {
       if (cards.length === 0) {
         return undefined;
       }
-      return cards
+      const _base =
+        "以下は経験に基づくタスク達成の抽象的な手順です。\n" +
+        "完全に従う必要はありませんが、参考にしてください。\n" +
+        "state: あなたの行動(反応)選択に必要な、ユーザー・会話・タスクの状況と目的\n" +
+        "action: あなたの行動(反応)\n" +
+        "outcome: ユーザーの行動(反応)";
+
+      const card_text = cards
         .map(
-          (card, idx) =>
-            `${idx + 1}. ${card.title}\n- appliesWhen: ${card.appliesWhen}\n- recommendedBehavior: ${card.recommendedBehavior}\n- avoidBehavior: ${card.avoidBehavior}\n- distinctionNotes: ${card.distinctionNotes}`,
+          (card) =>
+            `- state: ${card.state}\n- action: ${card.action}\n- outcome: ${card.outcome}\n`,
         )
         .join("\n\n");
+      return _base + card_text;
     },
   );
   app.start();

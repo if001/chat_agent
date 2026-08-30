@@ -93,12 +93,20 @@ const main = async (): Promise<void> => {
       if (cards.length === 0) {
         return undefined;
       }
-      return cards
+      const base =
+        "以下は経験に基づくタスク達成の抽象的な手順です。\n" +
+        "完全に従う必要はありませんが、参考にしてください。\n" +
+        "state: あなたの行動(反応)選択に必要な、ユーザー・会話・タスクの状況と目的\n" +
+        "action: あなたの行動(反応)\n" +
+        "outcome: ユーザーの行動(反応)";
+
+      const cardText = cards
         .map(
-          (card, idx) =>
-            `${idx + 1}. ${card.title}\n- appliesWhen: ${card.appliesWhen}\n- recommendedBehavior: ${card.recommendedBehavior}\n- avoidBehavior: ${card.avoidBehavior}\n- distinctionNotes: ${card.distinctionNotes}`,
+          (card) =>
+            `- state: ${card.state}\n- action: ${card.action}\n- outcome: ${card.outcome}\n`,
         )
         .join("\n\n");
+      return base + cardText;
     },
   );
 

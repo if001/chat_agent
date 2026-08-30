@@ -3,7 +3,11 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const createPath = () => join(tmpdir(), `queue_test_${Date.now()}_${Math.floor(Math.random() * 1000)}.json`);
+const createPath = () =>
+  join(
+    tmpdir(),
+    `queue_test_${Date.now()}_${Math.floor(Math.random() * 1000)}.json`,
+  );
 
 test("dequeue prioritizes user over scheduled tasks", async () => {
   const path = createPath();
