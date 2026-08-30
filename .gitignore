@@ -6,3 +6,11 @@ docs/
 node_modules/
 drizzle/
 packages/
+
+data/memory-system/*
+data/queues/*
+data/relationship-system/*
+data/simple-pomdp-system/*
+
+coverage/*
+memories/*
