@@ -1,6 +1,7 @@
 import { QueueApi, QueueTask } from "@chat-agent/queue";
 import { DiscordBotApp, DiscordTransport } from "./discordBotApp";
 import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
+import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
 
 const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 
@@ -135,6 +136,23 @@ test("records turn when mention reply is sent", async () => {
   });
 
   expect(records).toEqual(["mention-channel:user-1"]);
+});
+
+
+
+test("records each visible turn once during a multi-turn conversation", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const records: TurnRecordInput[] = [];
+  const app = new DiscordBotApp(identity, runtime, transport, "mention-channel", undefined, undefined, async (record) => { records.push(record); });
+  app.start();
+  await transport.emit({ channelId: "mention-channel", authorId: "user-1", content: "first", mentionsBot: true });
+  await transport.emit({ channelId: "mention-channel", authorId: "user-1", content: "second", mentionsBot: true });
+  expect(records).toHaveLength(2);
+  expect(records.map((record) => ({ threadId: record.threadId, source: record.source, messages: record.messages.map(({ role, content }) => ({ role, content })) }))).toEqual([
+    { threadId: "mention-channel:user-1", source: "user", messages: [{ role: "user", content: formatUserMessage("first") }, { role: "assistant", content: "bot response: " + formatUserMessage("first") }] },
+    { threadId: "mention-channel:user-1", source: "user", messages: [{ role: "user", content: formatUserMessage("second") }, { role: "assistant", content: "bot response: " + formatUserMessage("second") }] },
+  ]);
 });
 
 test("still replies when turn recording fails", async () => {

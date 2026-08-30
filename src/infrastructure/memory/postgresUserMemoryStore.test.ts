@@ -45,3 +45,12 @@ test("rememberUserNote inserts user note", async () => {
   });
 });
 
+
+
+test("user notes are append-only and do not interpret correction, deletion, or duplicates", async () => {
+  const db = new FakeDb();
+  const store = new PostgresUserMemoryStore(db as never);
+  const notes = ["prefer concise", "correction: prefer detailed", "delete: prefer concise", "prefer detailed", "prefer detailed"];
+  for (const note of notes) await store.rememberUserNote("bot1", "user1", note);
+  expect(db.inserted).toEqual(notes.map((note) => ({ botId: "bot1", userId: "user1", note })));
+});
