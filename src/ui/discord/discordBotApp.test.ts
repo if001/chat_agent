@@ -149,9 +149,9 @@ test("records each visible turn once during a multi-turn conversation", async ()
   await transport.emit({ channelId: "mention-channel", authorId: "user-1", content: "first", mentionsBot: true });
   await transport.emit({ channelId: "mention-channel", authorId: "user-1", content: "second", mentionsBot: true });
   expect(records).toHaveLength(2);
-  expect(records.map((record) => ({ threadId: record.threadId, source: record.source, messages: record.messages.map(({ role, content }) => ({ role, content })) }))).toEqual([
-    { threadId: "mention-channel:user-1", source: "user", messages: [{ role: "user", content: formatUserMessage("first") }, { role: "assistant", content: "bot response: " + formatUserMessage("first") }] },
-    { threadId: "mention-channel:user-1", source: "user", messages: [{ role: "user", content: formatUserMessage("second") }, { role: "assistant", content: "bot response: " + formatUserMessage("second") }] },
+  expect(records.map((record) => ({ threadId: record.threadId, kind: record.kind, messages: record.messages.map(({ role, content }) => ({ role, content })) }))).toEqual([
+    { threadId: "mention-channel:user-1", kind: "human", messages: [{ role: "user", content: formatUserMessage("first") }, { role: "assistant", content: "bot response: " + formatUserMessage("first") }] },
+    { threadId: "mention-channel:user-1", kind: "human", messages: [{ role: "user", content: formatUserMessage("second") }, { role: "assistant", content: "bot response: " + formatUserMessage("second") }] },
   ]);
 });
 
@@ -245,6 +245,7 @@ test("injects memory policy context for scheduled agent input", async () => {
     channelId: "mention-channel",
     targetThreadId: "mention-channel:user-1",
     source: "scheduled",
+    sourceInteractionId: "interaction-1",
     dueAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     locked: false,
@@ -285,6 +286,7 @@ test("injects memory policy context for scheduled agent input", async () => {
 
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
+  const records: TurnRecordInput[] = [];
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -292,7 +294,7 @@ test("injects memory policy context for scheduled agent input", async () => {
     "mention-channel",
     queue,
     undefined,
-    undefined,
+    async (record) => { records.push(record); },
     async () => "1. scheduled policy\n- recommendedBehavior: follow up",
   );
 
@@ -303,6 +305,7 @@ test("injects memory policy context for scheduled agent input", async () => {
   expect(runtime.systemPrompts[0]).toContain("# Memory Policy Context");
   expect(runtime.systemPrompts[0]).toContain("scheduled policy");
   expect(transport.sent[0]?.content).toBe("bot response: scheduled check-in");
+  expect(records[0]).toMatchObject({ kind: "proactive", sourceInteractionId: "interaction-1" });
 });
 
 test("strips leading discord mention before sending input to the agent", async () => {
