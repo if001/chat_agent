@@ -26,7 +26,7 @@ import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { join } from "node:path";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
-import { createSimplePomdpSystemClient } from "./infrastructure/simple-pomdp/simplePomdpSystemClient";
+import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
 
 const main = async (): Promise<void> => {
   console.log("start!");
@@ -177,10 +177,6 @@ const main = async (): Promise<void> => {
     ollamaModel: env.ollamaChatModel,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
-  const simplePomdpClient = createSimplePomdpSystemClient({
-    storeDir: env.simplePomdpStoreDir,
-  });
-
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -188,10 +184,7 @@ const main = async (): Promise<void> => {
     env.mentionChannelId,
     queueApi,
     env.discordBotUserId,
-    async (record) => {
-      await memoryClient.ingestTurnRecord(record);
-      await simplePomdpClient.ingestTurnRecord(record);
-    },
+    createTurnRecorder(memoryClient),
     async ({ botId, threadId, currentContext }) => {
       const cards = await memoryClient.queryApplicablePolicyCards({
         botId,
