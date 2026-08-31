@@ -6,8 +6,6 @@ https://github.com/if001/simple-pomdp-system
 
 https://github.com/if001/chat-memory-system
 
-https://github.com/if001/chat-relationship-system
-
 ## migrate
 
 ``` shell
