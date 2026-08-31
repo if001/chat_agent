@@ -22,7 +22,6 @@ export interface AppEnv {
   ollamaEmbeddingDimension: number;
   deepAgentSkillsSources: string[];
   queueDir: string;
-  relationshipStoreDir: string;
   simplePomdpStoreDir: string;
 }
 
@@ -71,8 +70,6 @@ export const loadEnv = (): AppEnv => ({
     .map((v) => v.trim())
     .filter((v) => v.length > 0),
   queueDir: process.env.QUEUE_DIR ?? "data/queues",
-  relationshipStoreDir:
-    process.env.RELATIONSHIP_STORE_DIR ?? "data/relationship-system",
   simplePomdpStoreDir:
     process.env.SIMPLE_POMDP_STORE_DIR ?? "data/simple-pomdp-system",
 });

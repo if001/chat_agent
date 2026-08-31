@@ -37,7 +37,6 @@ Thus one visible turn currently has one callback and two physical TurnRecord cop
 | Main queue | JSON per bot | Mention and agent-input delivery. |
 | simple-pomdp debug log | Optional JSONL | Diagnostics only. |
 | LangGraph checkpoint/store | PostgreSQL `app` | Agent execution state, not TurnRecords. |
-| relationship-system files | File stores | Package/client/tests exist, but no composition root constructs the client; unused at runtime. |
 
 ## Queue payloads
 
