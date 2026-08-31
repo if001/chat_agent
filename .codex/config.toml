@@ -1,0 +1,9 @@
+# プロジェクト内のファイルは読み書き可能
+sandbox_mode = "workspace-write"
+
+# sandbox 外に出る必要がある操作のみ確認
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+# npm/pnpm/pip/cargo などの依存取得を可能にする場合
+network_access = true

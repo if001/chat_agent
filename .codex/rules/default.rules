@@ -1,0 +1,87 @@
+# ---- Git: read-only operations ----
+
+prefix_rule(
+    pattern = ["git", ["status", "diff", "log", "show", "branch"]],
+    decision = "allow",
+    justification = "Allow read-only Git inspection.",
+)
+
+prefix_rule(
+    pattern = ["git", "rev-parse"],
+    decision = "allow",
+    justification = "Allow Git repository inspection.",
+)
+
+# ---- Git: operations that modify repository state ----
+
+prefix_rule(
+    pattern = ["git", ["commit", "push", "pull", "merge", "rebase", "reset", "checkout", "switch", "restore", "clean"]],
+    decision = "prompt",
+    justification = "Git operations that may change repository or remote state require approval.",
+)
+
+# ---- GitHub CLI: read-only ----
+
+prefix_rule(
+    pattern = ["gh", ["status", "browse"]],
+    decision = "allow",
+    justification = "Allow read-only GitHub inspection.",
+)
+
+prefix_rule(
+    pattern = ["gh", "pr", ["view", "list", "status", "diff", "checks"]],
+    decision = "allow",
+    justification = "Allow read-only GitHub pull-request inspection.",
+)
+
+prefix_rule(
+    pattern = ["gh", "issue", ["view", "list", "status"]],
+    decision = "allow",
+    justification = "Allow read-only GitHub issue inspection.",
+)
+
+# ---- Dangerous filesystem operations ----
+
+prefix_rule(
+    pattern = ["rm"],
+    decision = "prompt",
+    justification = "File deletion requires explicit approval.",
+)
+
+# ---- Dangerous Git operations ----
+
+prefix_rule(
+    pattern = ["git", "push", "--force"],
+    decision = "prompt",
+    justification = "Force push requires explicit approval.",
+)
+
+prefix_rule(
+    pattern = ["git", "push", "--force-with-lease"],
+    decision = "prompt",
+    justification = "Force push requires explicit approval.",
+)
+
+prefix_rule(
+    pattern = ["git", "clean"],
+    decision = "prompt",
+    justification = "Deleting untracked files requires explicit approval.",
+)
+
+prefix_rule(
+    pattern = ["rg"],
+    decision = "allow",
+    justification = "Allow read-only ripgrep searches.",
+)
+
+prefix_rule(
+    pattern = ["grep"],
+    decision = "allow",
+    justification = "Allow read-only grep searches.",
+)
+
+prefix_rule(
+    pattern = ["find"],
+    decision = "allow",
+    justification = "Allow filesystem searches.",
+)
