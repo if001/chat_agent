@@ -161,7 +161,10 @@ export class DiscordBotApp {
       await this.onTurnRecorded({
         botId: this.identity.botId,
         threadId: task.targetThreadId,
-        source: task.source,
+        kind: task.source === "user" ? "human" : "proactive",
+        ...(task.sourceInteractionId
+          ? { sourceInteractionId: task.sourceInteractionId }
+          : {}),
         messages: [
           { role: "user", content: task.text, timestampIso: timestamp },
           {

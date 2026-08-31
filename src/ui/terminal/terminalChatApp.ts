@@ -29,6 +29,7 @@ export class TerminalChatApp {
         await this.onTurnRecorded({
           botId: this.identity.botId,
           threadId: "terminal:default",
+          kind: "human",
           messages: [
             { role: "user", content: input, timestampIso: now.toISOString() },
             {
