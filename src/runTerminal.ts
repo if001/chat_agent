@@ -10,7 +10,10 @@ import { loadEnv } from "./config/env";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
-import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
+import {
+  createMemorySystemClient,
+  formatPolicyCardsForPrompt,
+} from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
 
 const main = async (): Promise<void> => {
@@ -87,20 +90,7 @@ const main = async (): Promise<void> => {
       if (cards.length === 0) {
         return undefined;
       }
-      const base =
-        "以下は経験に基づくタスク達成の抽象的な手順です。\n" +
-        "完全に従う必要はありませんが、参考にしてください。\n" +
-        "state: あなたの行動(反応)選択に必要な、ユーザー・会話・タスクの状況と目的\n" +
-        "action: あなたの行動(反応)\n" +
-        "outcome: ユーザーの行動(反応)";
-
-      const cardText = cards
-        .map(
-          (card) =>
-            `- state: ${card.state}\n- action: ${card.action}\n- outcome: ${card.outcome}\n`,
-        )
-        .join("\n\n");
-      return base + cardText;
+      return formatPolicyCardsForPrompt(cards);
     },
   );
 
