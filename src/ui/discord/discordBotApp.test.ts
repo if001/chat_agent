@@ -250,18 +250,30 @@ test("injects memory policy context for scheduled agent input", async () => {
     createdAt: new Date().toISOString(),
     locked: false,
   };
-  let dequeueCount = 0;
+  const readyTasks: QueueTask[] = [task];
 
   const queue: QueueApi = {
-    enqueueMention: async () => {
-      throw new Error("not used");
+    enqueueMention: async (input) => {
+      const mentionTask = {
+        id: "human-1",
+        type: "user" as const,
+        action: "mention" as const,
+        text: input.text,
+        channelId: input.channelId,
+        targetThreadId: `${input.channelId}:${input.userId}`,
+        source: "user" as const,
+        dueAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        locked: false,
+        authorId: input.userId,
+        mentionsBot: input.mentionsBot,
+      };
+      readyTasks.push(mentionTask);
+      return mentionTask;
     },
     enqueueConversationInput: async () => task,
     enqueueScheduledInput: async () => task,
-    dequeueReady: async () => {
-      dequeueCount += 1;
-      return dequeueCount === 1 ? { ...task, locked: true } : null;
-    },
+    dequeueReady: async () => readyTasks.shift() ?? null,
     ack: async () => undefined,
     release: async () => undefined,
     getStatus: async () => ({
@@ -306,6 +318,29 @@ test("injects memory policy context for scheduled agent input", async () => {
   expect(runtime.systemPrompts[0]).toContain("scheduled policy");
   expect(transport.sent[0]?.content).toBe("bot response: scheduled check-in");
   expect(records[0]).toMatchObject({ kind: "proactive", sourceInteractionId: "interaction-1" });
+
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "that sounds useful",
+    mentionsBot: true,
+  });
+  await flushMicrotasks();
+  await flushMicrotasks();
+
+  expect(records[1]).toMatchObject({
+    kind: "human",
+    sourceInteractionId: "interaction-1",
+  });
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "a separate follow-up",
+    mentionsBot: true,
+  });
+  await flushMicrotasks();
+  await flushMicrotasks();
+  expect(records[2]?.sourceInteractionId).toBeUndefined();
 });
 
 test("strips leading discord mention before sending input to the agent", async () => {
