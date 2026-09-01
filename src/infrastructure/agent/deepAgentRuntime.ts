@@ -3,6 +3,7 @@ import {
   BaseCheckpointSaver,
   BaseStore,
 } from "@langchain/langgraph-checkpoint";
+import { AgentRuntimeContext } from "./runtimeContext";
 
 interface DeepAgentInvoker {
   invoke(input: {
@@ -38,14 +39,29 @@ export class DeepAgentRuntime implements AgentRuntime {
     private readonly getCheckpointByBotId: (
       botId: string,
     ) => BaseCheckpointSaver | undefined,
+    private readonly runtimeContext: AgentRuntimeContext = new AgentRuntimeContext(),
   ) {}
 
   async respond(request: AgentRequest): Promise<AgentResponse> {
     const agent = this.getOrCreateAgent(request.botId, request.systemPrompt);
     const threadKey = `${request.botId}:${request.threadId ?? request.botId}`;
-    const result = await agent.invoke(
-      { messages: request.messages },
-      { configurable: { thread_id: threadKey } },
+    const messages = request.requestContext
+      ? [
+          { role: "system" as const, content: request.requestContext },
+          ...request.messages,
+        ]
+      : request.messages;
+    const result = await this.runtimeContext.run(
+      {
+        botId: request.botId,
+        userId: request.userId,
+        threadId: threadKey,
+      },
+      () =>
+        agent.invoke(
+          { messages },
+          { configurable: { thread_id: threadKey } },
+        ),
     );
     const assistantMessage = extractLastAssistantMessage(result.messages ?? []);
     return { content: assistantMessage?.content ?? "" };

@@ -5,13 +5,18 @@ import {
   DailyEventRepository,
   UserMemoryStore,
 } from "../../core/types";
+import { TrustedAgentContext } from "./runtimeContext";
+
+interface TrustedContextReader {
+  current(): TrustedAgentContext;
+}
 
 export interface CustomToolDeps {
   knowledgeAccessService: KnowledgeAccessService;
   userMemoryStore: UserMemoryStore;
   dailyEventRepository?: DailyEventRepository;
-  defaultUserId: string;
   botId: string;
+  runtimeContext: TrustedContextReader;
   enqueueTask?: (input: {
     text: string;
     delayMinutes?: number;
@@ -162,7 +167,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const rememberUserNoteTool = tool(
-    async ({ note, userId }: { note: string; userId?: string }) => {
+    async ({ note }: { note: string }) => {
       const destination = classifyMemoryDestination(note);
       if (destination !== "user_memory") {
         return JSON.stringify({
@@ -171,7 +176,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
         });
       }
       const saved = await deps.userMemoryStore.rememberUserNote(
-        userId ?? deps.defaultUserId,
+        deps.runtimeContext.current().userId,
         note,
       );
       return JSON.stringify({ ok: true, note: saved });
@@ -181,7 +186,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       description: "Saves stable user context. Deduplicates equivalent notes; do not use for dated events or proactive-topic reactions.",
       schema: schemaCompat(z.object({
         note: z.string(),
-        userId: z.string().optional(),
       })) as never,
     },
   );
@@ -201,9 +205,9 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const searchUserNotesTool = tool(
-    async ({ query, userId, limit }: { query: string; userId?: string; limit?: number }) => {
+    async ({ query, limit }: { query: string; limit?: number }) => {
       const results = await deps.userMemoryStore.searchUserNotes(
-        userId ?? deps.defaultUserId,
+        deps.runtimeContext.current().userId,
         query,
         limit ?? 5,
       );
@@ -214,14 +218,13 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       description: "Searches shared UserMemory notes and returns their IDs for explicit replacement or deletion.",
       schema: schemaCompat(z.object({
         query: z.string().default(""),
-        userId: z.string().optional(),
         limit: z.number().int().min(1).max(20).default(5),
       })) as never,
     },
   );
 
   const replaceUserNoteTool = tool(
-    async ({ noteId, note, userId }: { noteId: number; note: string; userId?: string }) => {
+    async ({ noteId, note }: { noteId: number; note: string }) => {
       const destination = classifyMemoryDestination(note);
       if (destination !== "user_memory") {
         return JSON.stringify({
@@ -230,7 +233,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
         });
       }
       const saved = await deps.userMemoryStore.replaceUserNote(
-        userId ?? deps.defaultUserId,
+        deps.runtimeContext.current().userId,
         noteId,
         note,
       );
@@ -242,15 +245,14 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       schema: schemaCompat(z.object({
         noteId: z.number().int().positive(),
         note: z.string(),
-        userId: z.string().optional(),
       })) as never,
     },
   );
 
   const deleteUserNoteTool = tool(
-    async ({ noteId, userId }: { noteId: number; userId?: string }) => {
+    async ({ noteId }: { noteId: number }) => {
       const deleted = await deps.userMemoryStore.deleteUserNote(
-        userId ?? deps.defaultUserId,
+        deps.runtimeContext.current().userId,
         noteId,
       );
       return JSON.stringify({ ok: deleted });
@@ -260,23 +262,20 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       description: "Deletes one searched UserMemory note by its ID after an explicit user request.",
       schema: schemaCompat(z.object({
         noteId: z.number().int().positive(),
-        userId: z.string().optional(),
       })) as never,
     },
   );
 
   const rememberDailyEventTool = tool(
-    async ({ eventDate, summary, userId, tags, sourceMessage }: {
+    async ({ eventDate, summary, tags, sourceMessage }: {
       eventDate: string;
       summary: string;
-      userId?: string;
       tags?: string[];
       sourceMessage?: string;
     }) => {
       const dailyEventRepository = requireDailyEventRepository();
       const saved = await dailyEventRepository.rememberDailyEvent({
-        botId: deps.botId,
-        userId: userId ?? deps.defaultUserId,
+        userId: deps.runtimeContext.current().userId,
         eventDate,
         summary,
         ...(tags ? { tags } : {}),
@@ -290,7 +289,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       schema: schemaCompat(z.object({
         eventDate: z.string(),
         summary: z.string(),
-        userId: z.string().optional(),
         tags: z.array(z.string()).optional(),
         sourceMessage: z.string().optional(),
       })) as never,
@@ -298,17 +296,15 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const searchDailyEventsTool = tool(
-    async ({ query, userId, limit, fromDate, toDate }: {
+    async ({ query, limit, fromDate, toDate }: {
       query: string;
-      userId?: string;
       limit?: number;
       fromDate?: string;
       toDate?: string;
     }) => {
       const dailyEventRepository = requireDailyEventRepository();
       const results = await dailyEventRepository.searchDailyEvents({
-        botId: deps.botId,
-        userId: userId ?? deps.defaultUserId,
+        userId: deps.runtimeContext.current().userId,
         query,
         ...(limit ? { limit } : {}),
         ...(fromDate ? { fromDate } : {}),
@@ -321,7 +317,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       description: "Searches short daily user activity records by text and optional date range.",
       schema: schemaCompat(z.object({
         query: z.string(),
-        userId: z.string().optional(),
         limit: z.number().int().min(1).max(20).optional(),
         fromDate: z.string().optional(),
         toDate: z.string().optional(),
@@ -330,16 +325,14 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const getDailyEventsByDateTool = tool(
-    async ({ date, userId, windowDays, limit }: {
+    async ({ date, windowDays, limit }: {
       date: string;
-      userId?: string;
       windowDays?: number;
       limit?: number;
     }) => {
       const dailyEventRepository = requireDailyEventRepository();
       const results = await dailyEventRepository.getDailyEventsByDate({
-        botId: deps.botId,
-        userId: userId ?? deps.defaultUserId,
+        userId: deps.runtimeContext.current().userId,
         date,
         ...(windowDays !== undefined ? { windowDays } : {}),
         ...(limit !== undefined ? { limit } : {}),
@@ -351,7 +344,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       description: "Gets daily user activity records around a specific date.",
       schema: schemaCompat(z.object({
         date: z.string(),
-        userId: z.string().optional(),
         windowDays: z.number().int().min(0).max(30).optional(),
         limit: z.number().int().min(1).max(50).optional(),
       })) as never,

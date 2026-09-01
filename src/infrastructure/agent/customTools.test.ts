@@ -14,6 +14,7 @@ import {
   WebListItem,
   WebPage,
 } from "@chat-agent/knowledge-access";
+import { AgentRuntimeContext } from "./runtimeContext";
 
 class KnowledgeAccessServiceStub implements KnowledgeAccessService {
   public savedWebKnowledgeInput: { botId: string; threadId?: string; url: string } | null = null;
@@ -87,8 +88,10 @@ class KnowledgeAccessServiceStub implements KnowledgeAccessService {
 
 class MemoryStoreStub implements UserMemoryStore {
   public notes: Array<{ id: number; note: string; createdAt: Date }> = [];
+  public readonly userIds: string[] = [];
 
-  async rememberUserNote(_userId: string, note: string) {
+  async rememberUserNote(userId: string, note: string) {
+    this.userIds.push(userId);
     const saved = { id: this.notes.length + 1, note, createdAt: new Date("2026-01-01T00:00:00.000Z") };
     this.notes.push(saved);
     return saved;
@@ -170,8 +173,10 @@ const createDeps = () => ({
   knowledgeAccessService: new KnowledgeAccessServiceStub(),
   userMemoryStore: new MemoryStoreStub(),
   dailyEventRepository: new DailyEventRepoStub(),
-  defaultUserId: "u1",
   botId: "b1",
+  runtimeContext: {
+    current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),
+  },
 });
 
 const findTool = (tools: Array<{ name: string; invoke(input: unknown): Promise<unknown> }>, name: string) => {
@@ -231,6 +236,39 @@ test("remember_user_note tool stores note", async () => {
 
   await findTool(tools, "remember_user_note").invoke({ note: "prefer concise" });
   expect(memoryStore.notes[0]?.note).toBe("prefer concise");
+});
+
+test("memory tools use trusted runtime user ID and do not expose userId in schema", async () => {
+  const deps = createDeps();
+  const memoryStore = deps.userMemoryStore as MemoryStoreStub;
+  const runtimeContext = new AgentRuntimeContext();
+  const tools = createCustomTools({ ...deps, runtimeContext });
+  const memoryToolNames = [
+    "remember_user_note",
+    "search_user_notes",
+    "replace_user_note",
+    "delete_user_note",
+    "remember_daily_event",
+    "search_daily_events",
+    "get_daily_events_by_date",
+  ];
+  for (const name of memoryToolNames) {
+    const candidate = findTool(tools, name) as {
+      schema?: { shape?: Record<string, unknown> };
+    };
+    expect(candidate.schema?.shape).not.toHaveProperty("userId");
+  }
+  const memoryTool = findTool(tools, "remember_user_note") as {
+    schema?: { shape?: Record<string, unknown> };
+    invoke(input: unknown): Promise<unknown>;
+  };
+
+  await runtimeContext.run(
+    { botId: "ao", userId: "discord-user-42", threadId: "c1:discord-user-42" },
+    () => memoryTool.invoke({ note: "prefer concise answers" }),
+  );
+
+  expect(memoryStore.userIds).toEqual(["discord-user-42"]);
 });
 
 test("read_memory_file returns file content", async () => {

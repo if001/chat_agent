@@ -39,12 +39,9 @@ const mentionBlock = () => {
 };
 const lastBlock =
   "あなたの仕事は、曖昧さを減らし、比較・分解・検討を通じて、次の判断に使える材料を返すことです。";
-const nowIso = (): string => new Date().toISOString();
-
 export const getAkaSystemPrompt = (): string =>
   `
 ${firstBlock}
-現在時刻: ${nowIso()}
 ${policy}
 ## ツールの方針
 - 複数回ツールを使うことができます。

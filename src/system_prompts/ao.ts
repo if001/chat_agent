@@ -45,12 +45,9 @@ const mentionBlock = () => {
   「アカ」にメッセージを送る場合、出力の最初に <@${_aka_id}> をつけてください。
 `.trim();
 };
-const nowIso = (): string => new Date().toISOString();
-
 export const getAoSystemPrompt = (): string =>
   `
 ${firstBlock}
-現在時刻: ${nowIso()}
 ${policy}
 ## ツールの方針
 - 複数回ツールを使うことができます。

@@ -19,6 +19,7 @@ export class TerminalChatApp {
     const policyPrompt = await this.resolvePolicyPromptBestEffort(input);
     const response = await this.runtime.respond({
       botId: this.identity.botId,
+      userId: "terminal-user",
       systemPrompt: policyPrompt
         ? `${this.identity.systemPrompt}\n\n# Memory Policy Context\n${policyPrompt}`
         : this.identity.systemPrompt,

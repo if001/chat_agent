@@ -16,6 +16,7 @@ export const analyzeArticle = async (
 ): Promise<ArticleAnalysis> => {
   const response = await runtime.respond({
     botId,
+    userId: botId,
     systemPrompt: ARTICLE_ANALYZER_PROMPT,
     ...(threadId ? { threadId } : {}),
     messages: [

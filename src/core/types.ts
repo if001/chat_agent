@@ -7,7 +7,9 @@ export interface ChatMessage {
 
 export interface AgentRequest {
   botId: string;
+  userId: string;
   systemPrompt: string;
+  requestContext?: string;
   threadId?: string;
   messages: ChatMessage[];
 }
@@ -82,7 +84,6 @@ export interface DailyEvent {
 }
 
 export interface RememberDailyEventInput {
-  botId: string;
   userId: string;
   eventDate: string;
   summary: string;
@@ -91,7 +92,6 @@ export interface RememberDailyEventInput {
 }
 
 export interface SearchDailyEventsInput {
-  botId: string;
   userId: string;
   query: string;
   limit?: number;
@@ -100,7 +100,6 @@ export interface SearchDailyEventsInput {
 }
 
 export interface GetDailyEventsByDateInput {
-  botId: string;
   userId: string;
   date: string;
   windowDays?: number;
