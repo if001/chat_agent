@@ -1,56 +1,102 @@
 import { PostgresUserMemoryStore } from "./postgresUserMemoryStore";
 
-class FakeDb {
-  public inserted: unknown[] = [];
+const fixed = new Date("2026-01-01T00:00:00.000Z");
 
-  insert(): { values: (value: unknown) => Promise<void> } {
+class FakeDb {
+  selected: Array<{ id: number; note: string; createdAt: Date }> = [];
+  inserted: unknown[] = [];
+  updated: unknown[] = [];
+  deleted = 0;
+
+  select() {
+    const chain = {
+      from: () => chain,
+      $dynamic: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      limit: async () => this.selected,
+    };
+    return chain;
+  }
+
+  insert() {
     return {
-      values: async (value: unknown) => {
+      values: (value: unknown) => {
         this.inserted.push(value);
+        const result = {
+          onConflictDoNothing: () => result,
+          returning: async () => [{ id: 1, ...(value as object), createdAt: fixed }],
+        };
+        return result;
       },
     };
   }
 
-  select(): {
-    from: () => {
-      where: () => {
-        orderBy: () => {
-          limit: () => Promise<Array<{ note: string; createdAt: Date }>>;
-        };
-      };
-    };
-  } {
+  update() {
     return {
-      from: () => ({
-        where: () => ({
-          orderBy: () => ({
-            limit: async () => [{ note: "n1", createdAt: new Date("2026-01-01T00:00:00.000Z") }],
+      set: (value: unknown) => {
+        this.updated.push(value);
+        return {
+          where: () => ({
+            returning: async () => [{ id: 1, userId: "user-1", ...(value as object), createdAt: fixed }],
           }),
-        }),
+        };
+      },
+    };
+  }
+
+  delete() {
+    return {
+      where: () => ({
+        returning: async () => {
+          this.deleted += 1;
+          return [{ id: 1 }];
+        },
       }),
     };
   }
 }
 
-test("rememberUserNote inserts user note", async () => {
+test("rememberUserNote is shared across bot identities and deduplicates normalized text", async () => {
   const db = new FakeDb();
   const store = new PostgresUserMemoryStore(db as never);
 
-  await store.rememberUserNote("bot1", "user1", "prefer concise answers");
+  const created = await store.rememberUserNote("user-1", "Prefer concise answers");
+  db.selected = [created];
+  const duplicateFromOtherBotPath = await store.rememberUserNote(
+    "user-1",
+    " prefer concise answers。 ",
+  );
 
-  expect(db.inserted[0]).toEqual({
-    botId: "bot1",
-    userId: "user1",
-    note: "prefer concise answers",
-  });
+  expect(db.inserted).toEqual([
+    { userId: "user-1", note: "Prefer concise answers" },
+  ]);
+  expect(duplicateFromOtherBotPath.id).toBe(created.id);
 });
 
+test("replaceUserNote updates the searched ID and old text is no longer returned", async () => {
+  const db = new FakeDb();
+  db.selected = [{ id: 1, note: "Prefer concise answers", createdAt: fixed }];
+  const store = new PostgresUserMemoryStore(db as never);
 
+  const updated = await store.replaceUserNote(
+    "user-1",
+    1,
+    "Prefer detailed answers",
+  );
+  db.selected = updated ? [updated] : [];
+  const oldResults = await store.searchUserNotes("user-1", "concise", 10);
 
-test("user notes are append-only and do not interpret correction, deletion, or duplicates", async () => {
+  expect(updated?.note).toBe("Prefer detailed answers");
+  expect(db.updated).toEqual([{ note: "Prefer detailed answers" }]);
+  expect(oldResults).toEqual([updated]);
+  expect(oldResults.some((item) => item.note.includes("concise"))).toBe(false);
+});
+
+test("deleteUserNote targets one user note ID", async () => {
   const db = new FakeDb();
   const store = new PostgresUserMemoryStore(db as never);
-  const notes = ["prefer concise", "correction: prefer detailed", "delete: prefer concise", "prefer detailed", "prefer detailed"];
-  for (const note of notes) await store.rememberUserNote("bot1", "user1", note);
-  expect(db.inserted).toEqual(notes.map((note) => ({ botId: "bot1", userId: "user1", note })));
+
+  await expect(store.deleteUserNote("user-1", 1)).resolves.toBe(true);
+  expect(db.deleted).toBe(1);
 });

@@ -59,12 +59,20 @@ class InMemoryKnowledgeRepo implements KnowledgeRepository {
 }
 
 class InMemoryUserMemoryStore implements UserMemoryStore {
-  async rememberUserNote(): Promise<void> {
-    return;
+  async rememberUserNote() {
+    return { id: 1, note: "note", createdAt: new Date() };
   }
 
-  async listUserNotes(): Promise<Array<{ note: string; createdAt: Date }>> {
+  async searchUserNotes() {
     return [];
+  }
+
+  async replaceUserNote() {
+    return null;
+  }
+
+  async deleteUserNote() {
+    return false;
   }
 
   async readMemoryFile(path: string): Promise<string> {

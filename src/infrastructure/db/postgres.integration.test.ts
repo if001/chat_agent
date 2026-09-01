@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { createDrizzleClient } from "./drizzleClient";
 import { createPostgresPool } from "./postgresPool";
 import {
@@ -43,7 +42,6 @@ integrationTest(
 
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const articleUrl = `https://example.com/integration/${suffix}`;
-    const botId = `bot_${suffix}`;
     const userId = `user_${suffix}`;
 
     try {
@@ -75,16 +73,41 @@ integrationTest(
       );
 
       await userMemoryStore.rememberUserNote(
-        botId,
         userId,
         "prefer direct answers",
       );
-      const notes = await userMemoryStore.listUserNotes(botId, userId, 5);
+      await userMemoryStore.rememberUserNote(
+        userId,
+        " Prefer direct answers。 ",
+      );
+      const notes = await userMemoryStore.searchUserNotes(
+        userId,
+        "direct answers",
+        5,
+      );
       expect(notes[0]?.note).toBe("prefer direct answers");
+      expect(notes).toHaveLength(1);
+      const replaced = await userMemoryStore.replaceUserNote(
+        userId,
+        notes[0]!.id,
+        "prefer detailed answers",
+      );
+      expect(replaced?.note).toBe("prefer detailed answers");
+      expect(
+        await userMemoryStore.searchUserNotes(userId, "direct answers", 5),
+      ).toEqual([]);
+      const otherUserId = `${userId}-other`;
+      await userMemoryStore.rememberUserNote(otherUserId, "separate user note");
+      expect(
+        await userMemoryStore.searchUserNotes(userId, "separate user", 5),
+      ).toEqual([]);
+      expect(await userMemoryStore.deleteUserNote(userId, replaced!.id)).toBe(
+        true,
+      );
     } finally {
       // await db.execute(sql`delete from articles where url = ${articleUrl}`);
       // await db.execute(
-      //   sql`delete from user_notes where bot_id = ${botId} and user_id = ${userId}`,
+      //   sql`delete from user_notes where user_id = ${userId}`,
       // );
       await pool.end();
     }
