@@ -2,6 +2,10 @@ import {
   DailyEventRepository,
   UserMemoryStore,
 } from "../../core/types";
+import {
+  ConversationFocusSource,
+  formatConversationFocus,
+} from "./conversationFocus";
 
 export type RequestKind =
   | "human"
@@ -32,10 +36,12 @@ export class RequestContextBuilder {
     private readonly dailyEventRepository: DailyEventRepository,
     private readonly policyContextReader: PolicyContextReader,
     private readonly now: () => Date = () => new Date(),
+    private readonly conversationFocusSource?: ConversationFocusSource,
   ) {}
 
   async build(input: RequestContextInput): Promise<string> {
-    const [notes, events, policy] = await Promise.all([
+    const focusSource = this.conversationFocusSource;
+    const [notes, events, policy, focus] = await Promise.all([
       loadOrDefault(
         () => this.userMemoryStore.searchUserNotes(input.userId, "", 10),
         [],
@@ -58,6 +64,17 @@ export class RequestContextBuilder {
           }),
         undefined,
       ),
+      focusSource
+        ? loadOrDefault(
+            () =>
+              focusSource.load({
+                botId: input.botId,
+                threadId: input.threadId,
+                currentContext: input.currentContext,
+              }),
+            null,
+          )
+        : null,
     ]);
 
     const sections = [`# Request Context\nCurrent time: ${this.now().toISOString()}`];
@@ -75,6 +92,10 @@ export class RequestContextBuilder {
     }
     if (policy?.trim()) {
       sections.push(`## Bot-specific PolicyCard\n${policy.trim()}`);
+    }
+    const formattedFocus = formatConversationFocus(focus);
+    if (formattedFocus) {
+      sections.push(`## Conversation Focus\n${formattedFocus}`);
     }
     if (
       (input.kind === "conversation" || input.kind === "proactive") &&

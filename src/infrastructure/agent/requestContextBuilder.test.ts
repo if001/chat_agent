@@ -84,3 +84,34 @@ test("includes proactive evidence only for proactive requests", async () => {
   expect(conversation).toContain("internal proactive objective");
   expect(proactive).toContain("internal proactive objective");
 });
+
+test("loads conversation focus from the latest request context", async () => {
+  const focusInputs: string[] = [];
+  const builder = new RequestContextBuilder(
+    userMemoryStore,
+    dailyEventRepository,
+    { load: async () => undefined },
+    () => new Date("2026-09-01T00:00:00.000Z"),
+    {
+      load: async ({ currentContext }) => {
+        focusInputs.push(currentContext ?? "");
+        return {
+          currentTopic: currentContext,
+          currentTopicStatus: "active",
+        };
+      },
+    },
+  );
+
+  const context = await builder.build({
+    botId: "ao",
+    userId: "discord-1",
+    threadId: "thread-1",
+    currentContext: "latest merged input",
+    kind: "human",
+  });
+
+  expect(focusInputs).toEqual(["latest merged input"]);
+  expect(context).toContain("## Conversation Focus");
+  expect(context).toContain("currentTopic: latest merged input");
+});
