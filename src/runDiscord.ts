@@ -206,8 +206,8 @@ const main = async (): Promise<void> => {
       createRecentTurnContextSource({ reader: turnRecordReader }),
       createUserMemoryContextSource({
         reader: {
-          listRecentUserMemory: async ({ botId, userId, limit }) =>
-            (await userMemoryStore.listUserNotes(botId, userId, limit)).map(
+          listRecentUserMemory: async ({ userId, limit }) =>
+            (await userMemoryStore.searchUserNotes(userId, "", limit)).map(
               (note) => ({
                 text: note.note,
                 createdAtIso: note.createdAt.toISOString(),

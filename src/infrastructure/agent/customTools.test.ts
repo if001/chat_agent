@@ -1,4 +1,7 @@
-import { createCustomTools } from "./customTools";
+import {
+  classifyMemoryDestination,
+  createCustomTools,
+} from "./customTools";
 import {
   DailyEvent,
   DailyEventRepository,
@@ -20,6 +23,7 @@ class KnowledgeAccessServiceStub implements KnowledgeAccessService {
     limit?: number;
     minScore?: number;
   }): Promise<SearchResultItem[]> {
+    void _input;
     return [{ articleId: "a1", score: 0.9, title: "t", summary: "s", tags: ["tag1"], url: "https://example.com" }];
   }
 
@@ -82,18 +86,30 @@ class KnowledgeAccessServiceStub implements KnowledgeAccessService {
 }
 
 class MemoryStoreStub implements UserMemoryStore {
-  public notes: string[] = [];
+  public notes: Array<{ id: number; note: string; createdAt: Date }> = [];
 
-  async rememberUserNote(_botId: string, _userId: string, note: string): Promise<void> {
-    this.notes.push(note);
+  async rememberUserNote(_userId: string, note: string) {
+    const saved = { id: this.notes.length + 1, note, createdAt: new Date("2026-01-01T00:00:00.000Z") };
+    this.notes.push(saved);
+    return saved;
   }
 
   async readMemoryFile(path: string): Promise<string> {
     return `file:${path}`;
   }
 
-  async listUserNotes(): Promise<Array<{ note: string; createdAt: Date }>> {
-    return [{ note: "prefer concise", createdAt: new Date("2026-01-01T00:00:00.000Z") }];
+  async searchUserNotes() {
+    return this.notes.length > 0
+      ? this.notes
+      : [{ id: 1, note: "prefer concise", createdAt: new Date("2026-01-01T00:00:00.000Z") }];
+  }
+
+  async replaceUserNote(_userId: string, noteId: number, note: string) {
+    return { id: noteId, note, createdAt: new Date("2026-01-01T00:00:00.000Z") };
+  }
+
+  async deleteUserNote() {
+    return true;
   }
 }
 
@@ -214,7 +230,7 @@ test("remember_user_note tool stores note", async () => {
   const tools = createCustomTools(deps);
 
   await findTool(tools, "remember_user_note").invoke({ note: "prefer concise" });
-  expect(memoryStore.notes[0]).toBe("prefer concise");
+  expect(memoryStore.notes[0]?.note).toBe("prefer concise");
 });
 
 test("read_memory_file returns file content", async () => {
@@ -246,12 +262,53 @@ test("get_saved_article can resolve by url", async () => {
   expect(parsed.url).toBe("https://example.com/u");
 });
 
-test("get_user_notes returns remembered notes", async () => {
+test("search_user_notes returns IDs for explicit updates", async () => {
   const tools = createCustomTools(createDeps());
 
-  const result = await findTool(tools, "get_user_notes").invoke({});
-  const parsed = JSON.parse(result as string) as Array<{ note: string }>;
-  expect(parsed[0]?.note).toBe("prefer concise");
+  const result = await findTool(tools, "search_user_notes").invoke({ query: "concise" });
+  const parsed = JSON.parse(result as string) as Array<{ id: number; note: string }>;
+  expect(parsed[0]).toMatchObject({ id: 1, note: "prefer concise" });
+});
+
+test("replace and delete user note tools operate on an explicit searched ID", async () => {
+  const tools = createCustomTools(createDeps());
+
+  const replaced = JSON.parse(
+    (await findTool(tools, "replace_user_note").invoke({
+      noteId: 1,
+      note: "prefer detailed answers",
+    })) as string,
+  ) as { ok: boolean; note: { id: number; note: string } };
+  const deleted = JSON.parse(
+    (await findTool(tools, "delete_user_note").invoke({ noteId: 1 })) as string,
+  ) as { ok: boolean };
+
+  expect(replaced).toMatchObject({
+    ok: true,
+    note: { id: 1, note: "prefer detailed answers" },
+  });
+  expect(deleted.ok).toBe(true);
+});
+
+test("UserMemory boundary excludes dated events and proactive interest", async () => {
+  expect(classifyMemoryDestination("2026-05-06 にテストを追加した")).toBe(
+    "daily_event",
+  );
+  expect(
+    classifyMemoryDestination("scheduled proactive話題への興味はpositive"),
+  ).toBe("topic_state");
+  expect(classifyMemoryDestination("回答は簡潔な方を好む")).toBe(
+    "user_memory",
+  );
+
+  const tools = createCustomTools(createDeps());
+  const rejected = JSON.parse(
+    (await findTool(tools, "remember_user_note").invoke({
+      note: "昨日、queueのテストを追加した",
+    })) as string,
+  ) as { ok: boolean; error: string };
+  expect(rejected).toMatchObject({ ok: false });
+  expect(rejected.error).toContain("daily_event");
 });
 
 test("remember_daily_event stores concise daily record", async () => {

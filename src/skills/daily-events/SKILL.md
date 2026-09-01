@@ -9,7 +9,7 @@ description: Save and retrieve concise day-by-day user activity records.
 Track short factual records of what the user did on specific dates, then reuse them when the user asks about dates or past activities.
 
 ## Save
-1. When the conversation includes a concrete user action worth remembering, call `remember_daily_event`.
+1. Save only when the user explicitly asks to remember a date-specific action or event.
 2. Keep the summary short and factual.
 3. Add a small tag list when it improves later retrieval.
 

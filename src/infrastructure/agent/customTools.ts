@@ -23,6 +23,26 @@ export interface CustomToolDeps {
 
 const schemaCompat = <T>(schema: T): T => schema;
 
+export type MemoryDestination = "user_memory" | "daily_event" | "topic_state";
+
+export const classifyMemoryDestination = (note: string): MemoryDestination => {
+  if (
+    /(?:\b\d{4}-\d{1,2}-\d{1,2}\b|\b(?:today|yesterday|tomorrow)\b|今日|昨日|明日|先週|今週)/iu.test(
+      note,
+    )
+  ) {
+    return "daily_event";
+  }
+  if (
+    /(?:(?:proactive|自発的|scheduled|conversation trigger).*(?:interest|興味|反応)|(?:interest|興味|反応).*(?:proactive|自発的|scheduled|conversation trigger))/iu.test(
+      note,
+    )
+  ) {
+    return "topic_state";
+  }
+  return "user_memory";
+};
+
 export const createCustomTools = (deps: CustomToolDeps) => {
   const requireDailyEventRepository = (): DailyEventRepository => {
     if (!deps.dailyEventRepository) {
@@ -143,12 +163,22 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const rememberUserNoteTool = tool(
     async ({ note, userId }: { note: string; userId?: string }) => {
-      await deps.userMemoryStore.rememberUserNote(deps.botId, userId ?? deps.defaultUserId, note);
-      return JSON.stringify({ ok: true });
+      const destination = classifyMemoryDestination(note);
+      if (destination !== "user_memory") {
+        return JSON.stringify({
+          ok: false,
+          error: `This content belongs in ${destination}, not UserMemory.`,
+        });
+      }
+      const saved = await deps.userMemoryStore.rememberUserNote(
+        userId ?? deps.defaultUserId,
+        note,
+      );
+      return JSON.stringify({ ok: true, note: saved });
     },
     {
       name: "remember_user_note",
-      description: "Saves user preference or policy note into persistent user memory.",
+      description: "Saves stable user context. Deduplicates equivalent notes; do not use for dated events or proactive-topic reactions.",
       schema: schemaCompat(z.object({
         note: z.string(),
         userId: z.string().optional(),
@@ -170,21 +200,67 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
   );
 
-  const getUserNotesTool = tool(
-    async ({ userId, limit }: { userId?: string; limit?: number }) => {
-      const results = await deps.userMemoryStore.listUserNotes(
-        deps.botId,
+  const searchUserNotesTool = tool(
+    async ({ query, userId, limit }: { query: string; userId?: string; limit?: number }) => {
+      const results = await deps.userMemoryStore.searchUserNotes(
         userId ?? deps.defaultUserId,
+        query,
         limit ?? 5,
       );
       return JSON.stringify(results);
     },
     {
-      name: "get_user_notes",
-      description: "Gets remembered notes for a user under the current bot namespace.",
+      name: "search_user_notes",
+      description: "Searches shared UserMemory notes and returns their IDs for explicit replacement or deletion.",
       schema: schemaCompat(z.object({
+        query: z.string().default(""),
         userId: z.string().optional(),
         limit: z.number().int().min(1).max(20).default(5),
+      })) as never,
+    },
+  );
+
+  const replaceUserNoteTool = tool(
+    async ({ noteId, note, userId }: { noteId: number; note: string; userId?: string }) => {
+      const destination = classifyMemoryDestination(note);
+      if (destination !== "user_memory") {
+        return JSON.stringify({
+          ok: false,
+          error: `This content belongs in ${destination}, not UserMemory.`,
+        });
+      }
+      const saved = await deps.userMemoryStore.replaceUserNote(
+        userId ?? deps.defaultUserId,
+        noteId,
+        note,
+      );
+      return JSON.stringify({ ok: saved !== null, note: saved });
+    },
+    {
+      name: "replace_user_note",
+      description: "Replaces one searched UserMemory note by its ID for an explicit user correction.",
+      schema: schemaCompat(z.object({
+        noteId: z.number().int().positive(),
+        note: z.string(),
+        userId: z.string().optional(),
+      })) as never,
+    },
+  );
+
+  const deleteUserNoteTool = tool(
+    async ({ noteId, userId }: { noteId: number; userId?: string }) => {
+      const deleted = await deps.userMemoryStore.deleteUserNote(
+        userId ?? deps.defaultUserId,
+        noteId,
+      );
+      return JSON.stringify({ ok: deleted });
+    },
+    {
+      name: "delete_user_note",
+      description: "Deletes one searched UserMemory note by its ID after an explicit user request.",
+      schema: schemaCompat(z.object({
+        noteId: z.number().int().positive(),
+        userId: z.string().optional(),
       })) as never,
     },
   );
@@ -336,7 +412,9 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     searchSavedKnowledgeTool,
     getSavedArticleTool,
     rememberUserNoteTool,
-    getUserNotesTool,
+    searchUserNotesTool,
+    replaceUserNoteTool,
+    deleteUserNoteTool,
     rememberDailyEventTool,
     searchDailyEventsTool,
     getDailyEventsByDateTool,

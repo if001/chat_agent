@@ -53,13 +53,20 @@ export interface KnowledgeRepository {
 }
 
 export interface UserNote {
+  id: number;
   note: string;
   createdAt: Date;
 }
 
 export interface UserMemoryStore {
-  rememberUserNote(botId: string, userId: string, note: string): Promise<void>;
-  listUserNotes(botId: string, userId: string, limit: number): Promise<UserNote[]>;
+  rememberUserNote(userId: string, note: string): Promise<UserNote>;
+  searchUserNotes(userId: string, query: string, limit: number): Promise<UserNote[]>;
+  replaceUserNote(
+    userId: string,
+    noteId: number,
+    note: string,
+  ): Promise<UserNote | null>;
+  deleteUserNote(userId: string, noteId: number): Promise<boolean>;
   readMemoryFile(path: string): Promise<string>;
 }
 
