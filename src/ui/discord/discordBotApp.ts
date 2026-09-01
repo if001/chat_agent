@@ -9,6 +9,7 @@ import { handleMention } from "../../core/usecases/handleMention";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
+import { ConversationFocus } from "../../infrastructure/agent/conversationFocus";
 
 export interface ConversationTopicPlan {
   text: string;
@@ -49,6 +50,10 @@ export class DiscordBotApp {
       threadId: string;
       userId: string;
     }) => Promise<ConversationTopicPlan | null>,
+    private readonly resolveConversationFocus?: (input: {
+      botId: string;
+      threadId: string;
+    }) => Promise<ConversationFocus | null>,
   ) {
     const queueApi = resolveQueueApi(
       queueOrDiscordBotUserId,
@@ -274,6 +279,18 @@ export class DiscordBotApp {
       return null;
     }
     try {
+      const focus = this.resolveConversationFocus
+        ? await this.resolveConversationFocus({
+            botId: this.identity.botId,
+            threadId: task.targetThreadId,
+          })
+        : null;
+      if (focus?.currentTopicStatus === "active") {
+        this.logInfo(
+          `conversation topic skipped threadId=${task.targetThreadId} reason=active_focus`,
+        );
+        return null;
+      }
       return await this.resolveConversationTopic({
         botId: this.identity.botId,
         threadId: task.targetThreadId,

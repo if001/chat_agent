@@ -443,6 +443,50 @@ test("integrates a conversation topic into one reply and links its next reaction
   });
 });
 
+test.each([
+  ["active", 0],
+  ["complete", 1],
+] as const)(
+  "uses %s conversation focus when deciding whether to plan a new topic",
+  async (currentTopicStatus, expectedPlans) => {
+    const transport = new TransportStub();
+    const runtime = new RuntimeStub();
+    const planned: string[] = [];
+    const app = new DiscordBotApp(
+      identity,
+      runtime,
+      transport,
+      "mention-channel",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => {
+        planned.push("planned");
+        return {
+          text: "自然な次の話題",
+          sourceInteractionId: "conversation-focus-1",
+        };
+      },
+      async () => ({
+        currentTopic: "現在の作業",
+        currentTopicStatus,
+      }),
+    );
+
+    app.start();
+    await transport.emit({
+      channelId: "mention-channel",
+      authorId: "user-1",
+      content: "続きを進めてください",
+      mentionsBot: true,
+    });
+
+    expect(planned).toHaveLength(expectedPlans);
+    expect(transport.sent).toHaveLength(1);
+  },
+);
+
 test.each(["了解", "エラーになりました", "そこは違うので訂正して"])(
   "does not plan a conversation topic for excluded input: %s",
   async (content) => {
@@ -602,6 +646,7 @@ test("does not block reply when sendTyping does not resolve", async () => {
 test("discards a stale response and replans once with all newer user input", async () => {
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
+  const contextInputs: string[] = [];
   runtime.block(formatUserMessage("first"));
 
   const app = new DiscordBotApp(
@@ -609,6 +654,13 @@ test("discards a stale response and replans once with all newer user input", asy
     runtime,
     transport,
     "mention-channel",
+    undefined,
+    undefined,
+    undefined,
+    async ({ currentContext }) => {
+      contextInputs.push(currentContext);
+      return `focus for ${currentContext}`;
+    },
   );
 
   app.start();
@@ -652,6 +704,7 @@ test("discards a stale response and replans once with all newer user input", asy
     formatUserMessage("first"),
     mergedInput,
   ]);
+  expect(contextInputs).toEqual([formatUserMessage("first"), mergedInput]);
   expect(transport.sent).toEqual([
     {
       channelId: "mention-channel",

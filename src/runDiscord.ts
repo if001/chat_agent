@@ -21,6 +21,7 @@ import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMem
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
+import { createConversationFocusSource } from "./infrastructure/agent/conversationFocus";
 import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
@@ -237,6 +238,9 @@ const main = async (): Promise<void> => {
       ),
     ),
   });
+  const conversationFocusSource = createConversationFocusSource(
+    turnRecordReader,
+  );
   const requestContextBuilder = new RequestContextBuilder(
     userMemoryStore,
     dailyEventRepository,
@@ -253,6 +257,8 @@ const main = async (): Promise<void> => {
           : undefined;
       },
     },
+    undefined,
+    conversationFocusSource,
   );
   const app = new DiscordBotApp(
     identity,
@@ -270,6 +276,8 @@ const main = async (): Promise<void> => {
         userId,
         trigger: "conversation",
       }),
+    ({ botId, threadId }) =>
+      conversationFocusSource.load({ botId, threadId }),
   );
   app.start();
 
