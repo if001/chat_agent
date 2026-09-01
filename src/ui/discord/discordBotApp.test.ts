@@ -366,6 +366,99 @@ test("strips leading discord mention before sending input to the agent", async (
   expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("こんにちは")}`);
 });
 
+test("integrates a conversation topic into one reply and links its next reaction", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const records: TurnRecordInput[] = [];
+  const planned: string[] = [];
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    undefined,
+    undefined,
+    async (record) => {
+      records.push(record);
+    },
+    undefined,
+    async ({ userId }) => {
+      planned.push(userId);
+      return {
+        text: "回答の末尾で実装の話題へ自然につなげる",
+        sourceInteractionId: "conversation-1",
+      };
+    },
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "設計の選択肢を比較して",
+    mentionsBot: true,
+  });
+
+  expect(transport.sent).toHaveLength(1);
+  expect(runtime.systemPrompts[0]).toContain("# Conversation Topic Integration");
+  expect(runtime.systemPrompts[0]).toContain("実装の話題へ自然につなげる");
+  expect(records[0]).toMatchObject({
+    kind: "human",
+    sourceInteractionId: "conversation-1",
+  });
+
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "その話は興味があります",
+    mentionsBot: true,
+  });
+
+  expect(planned).toEqual(["user-1"]);
+  expect(transport.sent).toHaveLength(2);
+  expect(records[1]).toMatchObject({
+    kind: "human",
+    sourceInteractionId: "conversation-1",
+  });
+});
+
+test.each(["了解", "エラーになりました", "そこは違うので訂正して"])(
+  "does not plan a conversation topic for excluded input: %s",
+  async (content) => {
+    const transport = new TransportStub();
+    const runtime = new RuntimeStub();
+    const planned: string[] = [];
+    const app = new DiscordBotApp(
+      identity,
+      runtime,
+      transport,
+      "mention-channel",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => {
+        planned.push(content);
+        return {
+          text: "unused",
+          sourceInteractionId: "conversation-1",
+        };
+      },
+    );
+
+    app.start();
+    await transport.emit({
+      channelId: "mention-channel",
+      authorId: "user-1",
+      content,
+      mentionsBot: true,
+    });
+
+    expect(planned).toHaveLength(0);
+    expect(transport.sent).toHaveLength(1);
+  },
+);
+
 test("strips leading discord nickname mention before sending input to the agent", async () => {
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
