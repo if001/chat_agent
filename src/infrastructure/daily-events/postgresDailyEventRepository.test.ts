@@ -37,7 +37,6 @@ test("rememberDailyEvent normalizes date and appends monthly file", async () => 
   try {
     const repository = new PostgresDailyEventRepository(createInsertDb());
     const saved = await repository.rememberDailyEvent({
-      botId: "ao",
       userId: "u1",
       eventDate: "20260506",
       summary: "queue のテストを追加した",
@@ -49,7 +48,6 @@ test("rememberDailyEvent normalizes date and appends monthly file", async () => 
       root,
       "memories",
       "daily-events",
-      "ao",
       "u1",
       "2026-05.md",
     );

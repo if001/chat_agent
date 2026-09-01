@@ -23,7 +23,7 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
     const [row] = await this.db
       .insert(dailyEventsTable)
       .values({
-        botId: input.botId,
+        botId: SHARED_DAILY_EVENT_SCOPE,
         userId: input.userId,
         eventDate: normalizedEventDate,
         summary: input.summary,
@@ -45,7 +45,7 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
 
   async searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]> {
     const conditions = [
-      eq(dailyEventsTable.botId, input.botId),
+      eq(dailyEventsTable.botId, SHARED_DAILY_EVENT_SCOPE),
       eq(dailyEventsTable.userId, input.userId),
       or(
         ilike(dailyEventsTable.summary, `%${input.query}%`),
@@ -74,7 +74,7 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
       .from(dailyEventsTable)
       .where(
         and(
-          eq(dailyEventsTable.botId, input.botId),
+          eq(dailyEventsTable.botId, SHARED_DAILY_EVENT_SCOPE),
           eq(dailyEventsTable.userId, input.userId),
           gte(dailyEventsTable.eventDate, fromDate),
           lte(dailyEventsTable.eventDate, toDate),
@@ -90,7 +90,7 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
   ): Promise<void> {
     const month = input.eventDate.slice(0, 7);
     const dir = resolveMemoryPath(
-      path.posix.join(this.memoriesRootDir, input.botId, input.userId),
+      path.posix.join(this.memoriesRootDir, input.userId),
     );
     await mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${month}.md`);
@@ -99,6 +99,8 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
     await appendFile(filePath, line, "utf8");
   }
 }
+
+export const SHARED_DAILY_EVENT_SCOPE = "shared";
 
 const mapRow = (row: typeof dailyEventsTable.$inferSelect): DailyEvent => ({
   id: row.id,

@@ -19,6 +19,8 @@ import {
 } from "./infrastructure/agent/ollamaChatModel";
 import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
 import { createCustomTools } from "./infrastructure/agent/customTools";
+import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
+import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
 import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
@@ -126,12 +128,13 @@ const main = async (): Promise<void> => {
     join(env.queueDir, `${identity.botId}.json`),
   );
   const queueApi = createQueueApi(queueStore);
+  const runtimeContext = new AgentRuntimeContext();
   const tools = createCustomTools({
     knowledgeAccessService,
     userMemoryStore,
     dailyEventRepository,
-    defaultUserId: "discord-user",
     botId: identity.botId,
+    runtimeContext,
     enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
       const dueAt = atIso
         ? new Date(atIso)
@@ -140,6 +143,7 @@ const main = async (): Promise<void> => {
           );
       const task = await queueApi.enqueueScheduledInput({
         botId: identity.botId,
+        userId: runtimeContext.current().userId,
         channelId: env.mentionChannelId,
         text,
         dueAt,
@@ -172,6 +176,7 @@ const main = async (): Promise<void> => {
       }),
     () => store,
     () => checkpointer,
+    runtimeContext,
   );
 
   const discordClient = new Client({
@@ -232,6 +237,23 @@ const main = async (): Promise<void> => {
       ),
     ),
   });
+  const requestContextBuilder = new RequestContextBuilder(
+    userMemoryStore,
+    dailyEventRepository,
+    {
+      load: async ({ botId, threadId, currentContext }) => {
+        const cards = await memoryClient.queryApplicablePolicyCards({
+          botId,
+          threadId,
+          currentContext,
+          limit: 5,
+        });
+        return cards.length > 0
+          ? formatPolicyCardsForPrompt(cards)
+          : undefined;
+      },
+    },
+  );
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -240,18 +262,7 @@ const main = async (): Promise<void> => {
     queueApi,
     env.discordBotUserId,
     createTurnRecorder(memoryClient),
-    async ({ botId, threadId, currentContext }) => {
-      const cards = await memoryClient.queryApplicablePolicyCards({
-        botId,
-        threadId,
-        currentContext,
-        limit: 5,
-      });
-      if (cards.length === 0) {
-        return undefined;
-      }
-      return formatPolicyCardsForPrompt(cards);
-    },
+    (input) => requestContextBuilder.build(input),
     async ({ botId, threadId, userId }) =>
       conversationPlanner.runTrigger({
         botId,

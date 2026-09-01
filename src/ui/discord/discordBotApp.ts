@@ -36,10 +36,13 @@ export class DiscordBotApp {
     private readonly onTurnRecorded?: (
       record: TurnRecordInput,
     ) => Promise<void>,
-    private readonly resolvePolicyPrompt?: (input: {
+    private readonly resolveRequestContext?: (input: {
       botId: string;
+      userId: string;
       threadId: string;
       currentContext: string;
+      kind: "human" | "conversation" | "proactive" | "delegation";
+      proactiveEvidence?: string;
     }) => Promise<string | undefined>,
     private readonly resolveConversationTopic?: (input: {
       botId: string;
@@ -110,22 +113,23 @@ export class DiscordBotApp {
       }
       this.sendTypingBestEffort(task.channelId);
       const conversationTopic = await this.planConversationTopic(task);
-      const systemPrompt = await this.resolveSystemPrompt(
+      const requestContext = await this.buildRequestContext(
+        task.userId,
         task.targetThreadId,
         task.text,
+        conversationTopic ? "conversation" : "human",
+        conversationTopic?.text,
       );
       const mentionReply = await handleMention(
         this.identity,
         this.runtime,
         {
           channelId: task.channelId,
-          authorId: task.authorId,
+          authorId: task.userId,
           content: task.text,
           mentionsBot: task.mentionsBot,
         },
-        conversationTopic
-          ? `${systemPrompt}\n\n# Conversation Topic Integration\n${conversationTopic.text}`
-          : systemPrompt,
+        requestContext,
       );
       if (mentionReply) {
         await this.transport.sendMessage(task.channelId, mentionReply);
@@ -144,9 +148,18 @@ export class DiscordBotApp {
     if (task.action === "agent_input") {
       this.sendTypingBestEffort(task.channelId);
       const threadId = task.targetThreadId;
+      const requestContext = await this.buildRequestContext(
+        task.userId,
+        threadId,
+        task.text,
+        "proactive",
+        task.text,
+      );
       const result = await this.runtime.respond({
         botId: this.identity.botId,
-        systemPrompt: await this.resolveSystemPrompt(threadId, task.text),
+        userId: task.userId,
+        systemPrompt: this.identity.systemPrompt,
+        ...(requestContext ? { requestContext } : {}),
         threadId,
         messages: [{ role: "user", content: task.text }],
       });
@@ -257,31 +270,34 @@ export class DiscordBotApp {
     }
   }
 
-  private async resolveSystemPrompt(
+  private async buildRequestContext(
+    userId: string,
     threadId: string,
     currentContext: string,
-  ): Promise<string> {
-    if (!this.resolvePolicyPrompt) {
-      return this.identity.systemPrompt;
+    kind: "human" | "conversation" | "proactive" | "delegation",
+    proactiveEvidence?: string,
+  ): Promise<string | undefined> {
+    if (!this.resolveRequestContext) {
+      return proactiveEvidence
+        ? `# Conversation Topic Integration\n${proactiveEvidence}`
+        : undefined;
     }
     try {
-      const policyPrompt = await this.resolvePolicyPrompt({
+      return await this.resolveRequestContext({
         botId: this.identity.botId,
+        userId,
         threadId,
         currentContext,
+        kind,
+        ...(proactiveEvidence ? { proactiveEvidence } : {}),
       });
-      console.log(`[resolveSystemPrompt] ${policyPrompt}`);
-      if (!policyPrompt || policyPrompt.trim().length === 0) {
-        return this.identity.systemPrompt;
-      }
-      return `${this.identity.systemPrompt}\n\n# Memory Policy Context\n${policyPrompt}`;
     } catch (error: unknown) {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(
-        `[memory-system-error] policy resolve failed: ${message}\n`,
+        `[request-context-error] context build failed: ${message}\n`,
       );
-      return this.identity.systemPrompt;
+      return undefined;
     }
   }
 }

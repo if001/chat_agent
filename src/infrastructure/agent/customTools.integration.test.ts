@@ -111,8 +111,10 @@ integrationTest(
     const tools = createCustomTools({
       knowledgeAccessService,
       userMemoryStore: new InMemoryUserMemoryStore(),
-      defaultUserId: "u1",
       botId: "b1",
+      runtimeContext: {
+        current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),
+      },
     });
 
     const webListTool = tools.find((tool) => tool.name === "web_list");
