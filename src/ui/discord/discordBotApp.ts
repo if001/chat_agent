@@ -132,6 +132,12 @@ export class DiscordBotApp {
         requestContext,
       );
       if (mentionReply) {
+        if (!(await this.isCurrentConversationVersion(task))) {
+          this.logInfo(
+            `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
+          );
+          return;
+        }
         await this.transport.sendMessage(task.channelId, mentionReply);
         await this.recordTurn(
           task,
@@ -164,6 +170,12 @@ export class DiscordBotApp {
         messages: [{ role: "user", content: task.text }],
       });
       if (result.content.length > 0) {
+        if (!(await this.isCurrentConversationVersion(task))) {
+          this.logInfo(
+            `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
+          );
+          return;
+        }
         await this.transport.sendMessage(task.channelId, result.content);
         await this.recordTurn(task, result.content);
         this.logInfo(`replied id=${task.id} action=agent_input`);
@@ -179,6 +191,13 @@ export class DiscordBotApp {
         error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(`[discord-typing-error] ${message}\n`);
     });
+  }
+
+  private async isCurrentConversationVersion(task: QueueTask): Promise<boolean> {
+    const latest = await this.queueApi.getLatestConversationVersion(
+      task.targetThreadId,
+    );
+    return task.conversationVersion === latest;
   }
 
   private logInfo(message: string): void {

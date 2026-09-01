@@ -8,9 +8,17 @@ const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 const formatUserMessage = (message: string): string =>
   `Current time: ${FIXED_NOW}\n\nUser message:\n${message}`;
 
+const mergeUserMessages = (...messages: string[]): string =>
+  messages.reduce((combined, message) =>
+    combined.length === 0
+      ? formatUserMessage(message)
+      : `${combined}\n\nAdditional user message:\n${formatUserMessage(message)}`,
+  "");
+
 const flushMicrotasks = async (): Promise<void> => {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
 };
 
 class RuntimeStub implements AgentRuntime {
@@ -251,6 +259,7 @@ test("injects memory policy context for scheduled agent input", async () => {
     channelId: "mention-channel",
     userId: "user-1",
     targetThreadId: "mention-channel:user-1",
+    conversationVersion: 0,
     source: "scheduled",
     sourceInteractionId: "interaction-1",
     dueAt: new Date().toISOString(),
@@ -258,9 +267,11 @@ test("injects memory policy context for scheduled agent input", async () => {
     locked: false,
   };
   const readyTasks: QueueTask[] = [task];
+  let latestConversationVersion = 0;
 
   const queue: QueueApi = {
     enqueueMention: async (input) => {
+      latestConversationVersion += 1;
       const mentionTask = {
         id: "human-1",
         type: "user" as const,
@@ -269,6 +280,7 @@ test("injects memory policy context for scheduled agent input", async () => {
         channelId: input.channelId,
         userId: input.userId,
         targetThreadId: `${input.channelId}:${input.userId}`,
+        conversationVersion: latestConversationVersion,
         source: "user" as const,
         dueAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -302,6 +314,7 @@ test("injects memory policy context for scheduled agent input", async () => {
       },
       next: [],
     }),
+    getLatestConversationVersion: async () => latestConversationVersion,
   };
 
   const transport = new TransportStub();
@@ -586,7 +599,7 @@ test("does not block reply when sendTyping does not resolve", async () => {
   expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("@bot hi")}`);
 });
 
-test("processes later queued user input after the current reply finishes", async () => {
+test("discards a stale response and replans once with all newer user input", async () => {
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
   runtime.block(formatUserMessage("first"));
@@ -610,7 +623,14 @@ test("processes later queued user input after the current reply finishes", async
     channelId: "mention-channel",
     authorId: "user-1",
     content: "second",
-    mentionsBot: true,
+    mentionsBot: false,
+  });
+  await flushMicrotasks();
+  const thirdEmit = transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "third",
+    mentionsBot: false,
   });
   await flushMicrotasks();
 
@@ -621,23 +641,21 @@ test("processes later queued user input after the current reply finishes", async
   runtime.release(formatUserMessage("first"));
   await firstEmit;
   await secondEmit;
+  await thirdEmit;
 
+  const mergedInput = mergeUserMessages("first", "second", "third");
   expect(runtime.started).toEqual([
     formatUserMessage("first"),
-    formatUserMessage("second"),
+    mergedInput,
   ]);
   expect(runtime.finished).toEqual([
     formatUserMessage("first"),
-    formatUserMessage("second"),
+    mergedInput,
   ]);
   expect(transport.sent).toEqual([
     {
       channelId: "mention-channel",
-      content: `bot response: ${formatUserMessage("first")}`,
-    },
-    {
-      channelId: "mention-channel",
-      content: `bot response: ${formatUserMessage("second")}`,
+      content: `bot response: ${mergedInput}`,
     },
   ]);
 });
@@ -649,7 +667,9 @@ test("does not send a duplicate reply when ack fails after a successful response
     action: "mention",
     text: formatUserMessage("first"),
     channelId: "mention-channel",
+    userId: "user-1",
     targetThreadId: "mention-channel:user-1",
+    conversationVersion: 1,
     source: "user",
     authorId: "user-1",
     mentionsBot: true,
@@ -695,6 +715,7 @@ test("does not send a duplicate reply when ack fails after a successful response
       },
       next: [],
     }),
+    getLatestConversationVersion: async () => 1,
   };
 
   const transport = new TransportStub();
