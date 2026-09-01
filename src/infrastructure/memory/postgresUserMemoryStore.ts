@@ -1,7 +1,5 @@
 import { UserMemoryStore, UserNote } from "../../core/types";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { and, desc, eq, ilike } from "drizzle-orm";
 import { userNotesTable } from "../db/schema";
 
@@ -94,19 +92,7 @@ export class PostgresUserMemoryStore implements UserMemoryStore {
       .returning({ id: userNotesTable.id });
     return rows.length > 0;
   }
-
-  async readMemoryFile(filePath: string): Promise<string> {
-    const normalized = filePath.replace(/\\/g, "/");
-    if (!normalized.startsWith("/memories/")) {
-      throw new Error("read_memory_file only allows paths under /memories/");
-    }
-    const resolved = resolveMemoryPath(normalized);
-    return readFile(resolved, "utf8");
-  }
 }
-
-export const resolveMemoryPath = (publicPath: string): string =>
-  path.join(process.cwd(), publicPath.replace(/^\//, ""));
 
 const normalizeNote = (value: string): string =>
   value.trim().toLocaleLowerCase().replace(/[\s。、,.!！?？]+/gu, " ").trim();

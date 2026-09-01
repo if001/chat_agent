@@ -190,20 +190,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
   );
 
-  const readMemoryFileTool = tool(
-    async ({ path }: { path: string }) => {
-      const content = await deps.userMemoryStore.readMemoryFile(path);
-      return JSON.stringify({ path, content });
-    },
-    {
-      name: "read_memory_file",
-      description: "Reads local memory file path such as /memories/research-notes.md.",
-      schema: schemaCompat(z.object({
-        path: z.string(),
-      })) as never,
-    },
-  );
-
   const searchUserNotesTool = tool(
     async ({ query, limit }: { query: string; limit?: number }) => {
       const results = await deps.userMemoryStore.searchUserNotes(
@@ -410,7 +396,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     rememberDailyEventTool,
     searchDailyEventsTool,
     getDailyEventsByDateTool,
-    readMemoryFileTool,
     enqueueTaskTool,
     getQueueStatusTool,
   ];

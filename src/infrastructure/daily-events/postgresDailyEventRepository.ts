@@ -7,16 +7,10 @@ import {
 } from "../../core/types";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
-import { appendFile, mkdir } from "node:fs/promises";
-import path from "node:path";
 import { dailyEventsTable } from "../db/schema";
-import { resolveMemoryPath } from "../memory/postgresUserMemoryStore";
 
 export class PostgresDailyEventRepository implements DailyEventRepository {
-  constructor(
-    private readonly db: NodePgDatabase,
-    private readonly memoriesRootDir: string = "/memories/daily-events",
-  ) {}
+  constructor(private readonly db: NodePgDatabase) {}
 
   async rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent> {
     const normalizedEventDate = normalizeDateInput(input.eventDate);
@@ -34,12 +28,6 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
     if (!row) {
       throw new Error("failed to persist daily event");
     }
-    await this.appendMonthlyFile({
-      ...input,
-      eventDate: normalizedEventDate,
-      tags: input.tags ?? [],
-      createdAt: new Date(row.createdAt),
-    });
     return mapRow(row);
   }
 
@@ -83,20 +71,6 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
       .orderBy(asc(dailyEventsTable.eventDate), asc(dailyEventsTable.createdAt))
       .limit(input.limit ?? 20);
     return rows.map(mapRow);
-  }
-
-  private async appendMonthlyFile(
-    input: RememberDailyEventInput & { tags: string[]; createdAt: Date },
-  ): Promise<void> {
-    const month = input.eventDate.slice(0, 7);
-    const dir = resolveMemoryPath(
-      path.posix.join(this.memoriesRootDir, input.userId),
-    );
-    await mkdir(dir, { recursive: true });
-    const filePath = path.join(dir, `${month}.md`);
-    const tags = input.tags.length > 0 ? ` [tags: ${input.tags.join(", ")}]` : "";
-    const line = `- ${input.eventDate} ユーザーは${input.summary}${tags}\n`;
-    await appendFile(filePath, line, "utf8");
   }
 }
 

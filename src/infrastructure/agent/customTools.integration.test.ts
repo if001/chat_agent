@@ -75,9 +75,6 @@ class InMemoryUserMemoryStore implements UserMemoryStore {
     return false;
   }
 
-  async readMemoryFile(path: string): Promise<string> {
-    return `file:${path}`;
-  }
 }
 
 const runIntegration = process.env.RUN_WEB_BACKEND_TESTS === "1";

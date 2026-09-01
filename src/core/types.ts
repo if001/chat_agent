@@ -69,7 +69,6 @@ export interface UserMemoryStore {
     note: string,
   ): Promise<UserNote | null>;
   deleteUserNote(userId: string, noteId: number): Promise<boolean>;
-  readMemoryFile(path: string): Promise<string>;
 }
 
 export interface DailyEvent {
