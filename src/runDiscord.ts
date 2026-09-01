@@ -27,6 +27,17 @@ import { join } from "node:path";
 import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import { createMemorySystemClient } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
+import { createPostgresTurnRecordReader } from "@chat-agent/memory-system";
+import {
+  createFileInteractionLogStore,
+  createFileTopicStateStore,
+  createOllamaDialoguePlanningModel,
+  createRecentTurnContextSource,
+  createSimplePomdpSystemService,
+  createTopicStateInteractionLogContextSource,
+  createUserMemoryContextSource,
+  loadInitialDomainCandidates,
+} from "@chat-agent/simple-pomdp-system";
 
 const main = async (): Promise<void> => {
   console.log("start!");
@@ -177,6 +188,47 @@ const main = async (): Promise<void> => {
     ollamaModel: env.ollamaChatModel,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
+  const turnRecordReader = createPostgresTurnRecordReader(env.postgresUrl);
+  const topicStateStore = createFileTopicStateStore({
+    baseDir: join(env.simplePomdpStoreDir, "topic-states"),
+  });
+  const interactionLogStore = createFileInteractionLogStore({
+    baseDir: join(env.simplePomdpStoreDir, "interaction-logs"),
+  });
+  const conversationPlanner = createSimplePomdpSystemService({
+    turnRecordReader,
+    topicStateStore,
+    interactionLogStore,
+    contextSources: [
+      createRecentTurnContextSource({ reader: turnRecordReader }),
+      createUserMemoryContextSource({
+        reader: {
+          listRecentUserMemory: async ({ botId, userId, limit }) =>
+            (await userMemoryStore.listUserNotes(botId, userId, limit)).map(
+              (note) => ({
+                text: note.note,
+                createdAtIso: note.createdAt.toISOString(),
+              }),
+            ),
+        },
+      }),
+      createTopicStateInteractionLogContextSource({
+        topicStateReader: topicStateStore,
+        interactionLogReader: interactionLogStore,
+      }),
+    ],
+    plannerModel: createOllamaDialoguePlanningModel(
+      env.ollamaBaseUrl,
+      env.ollamaChatModel,
+      env.ollamaApiKey,
+    ),
+    initialDomainCandidates: await loadInitialDomainCandidates(
+      join(
+        process.cwd(),
+        "packages/simple-pomdp-system/domains/initial_domains.txt",
+      ),
+    ),
+  });
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -210,6 +262,13 @@ const main = async (): Promise<void> => {
         .join("\n\n");
       return _base + card_text;
     },
+    async ({ botId, threadId, userId }) =>
+      conversationPlanner.runTrigger({
+        botId,
+        threadId,
+        userId,
+        trigger: "conversation",
+      }),
   );
   app.start();
 

@@ -1,9 +1,19 @@
 import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
-import { createInMemoryQueueApi, QueueApi, QueueTask } from "@chat-agent/queue";
+import {
+  createInMemoryQueueApi,
+  MentionQueueTask,
+  QueueApi,
+  QueueTask,
+} from "@chat-agent/queue";
 import { handleMention } from "../../core/usecases/handleMention";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
+
+export interface ConversationTopicPlan {
+  text: string;
+  sourceInteractionId: string;
+}
 
 export interface DiscordTransport {
   onMessage(handler: (message: ChannelMessage) => Promise<void>): void;
@@ -31,6 +41,11 @@ export class DiscordBotApp {
       threadId: string;
       currentContext: string;
     }) => Promise<string | undefined>,
+    private readonly resolveConversationTopic?: (input: {
+      botId: string;
+      threadId: string;
+      userId: string;
+    }) => Promise<ConversationTopicPlan | null>,
   ) {
     const queueApi = resolveQueueApi(
       queueOrDiscordBotUserId,
@@ -94,6 +109,11 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
+      const conversationTopic = await this.planConversationTopic(task);
+      const systemPrompt = await this.resolveSystemPrompt(
+        task.targetThreadId,
+        task.text,
+      );
       const mentionReply = await handleMention(
         this.identity,
         this.runtime,
@@ -103,11 +123,17 @@ export class DiscordBotApp {
           content: task.text,
           mentionsBot: task.mentionsBot,
         },
-        await this.resolveSystemPrompt(task.targetThreadId, task.text),
+        conversationTopic
+          ? `${systemPrompt}\n\n# Conversation Topic Integration\n${conversationTopic.text}`
+          : systemPrompt,
       );
       if (mentionReply) {
         await this.transport.sendMessage(task.channelId, mentionReply);
-        await this.recordTurn(task, mentionReply);
+        await this.recordTurn(
+          task,
+          mentionReply,
+          conversationTopic?.sourceInteractionId,
+        );
         this.logInfo(`replied id=${task.id} action=mention`);
       } else {
         this.logError(`no_reply id=${task.id} action=mention`);
@@ -153,6 +179,7 @@ export class DiscordBotApp {
   private async recordTurn(
     task: QueueTask,
     assistantContent: string,
+    conversationInteractionId?: string,
   ): Promise<void> {
     if (!this.onTurnRecorded) {
       return;
@@ -160,7 +187,8 @@ export class DiscordBotApp {
     const timestamp = new Date().toISOString();
     const sourceInteractionId =
       task.source === "user"
-        ? (task.sourceInteractionId ??
+        ? (conversationInteractionId ??
+          task.sourceInteractionId ??
           this.pendingInteractionByThread.get(task.targetThreadId))
         : task.sourceInteractionId;
     try {
@@ -182,7 +210,14 @@ export class DiscordBotApp {
         createdAtIso: timestamp,
       });
       if (task.source === "user") {
-        this.pendingInteractionByThread.delete(task.targetThreadId);
+        if (conversationInteractionId) {
+          this.pendingInteractionByThread.set(
+            task.targetThreadId,
+            conversationInteractionId,
+          );
+        } else {
+          this.pendingInteractionByThread.delete(task.targetThreadId);
+        }
       } else if (sourceInteractionId) {
         this.pendingInteractionByThread.set(
           task.targetThreadId,
@@ -193,6 +228,32 @@ export class DiscordBotApp {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(`[memory-system-error] ${message}\n`);
+    }
+  }
+
+  private async planConversationTopic(
+    task: MentionQueueTask,
+  ): Promise<ConversationTopicPlan | null> {
+    if (
+      !this.resolveConversationTopic ||
+      this.pendingInteractionByThread.has(task.targetThreadId) ||
+      !isConversationTopicEligible(extractUserMessage(task.text))
+    ) {
+      return null;
+    }
+    try {
+      return await this.resolveConversationTopic({
+        botId: this.identity.botId,
+        threadId: task.targetThreadId,
+        userId: task.authorId,
+      });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(
+        `[simple-pomdp-error] conversation trigger failed: ${message}\n`,
+      );
+      return null;
     }
   }
 
@@ -240,6 +301,26 @@ const sanitizeDiscordInput = (
 
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const extractUserMessage = (input: string): string =>
+  input.split("\n\nUser message:\n").at(-1)?.trim() ?? input.trim();
+
+export const isConversationTopicEligible = (input: string): boolean => {
+  const text = input.trim();
+  if (text.length === 0) {
+    return false;
+  }
+  if (
+    /^(?:ok(?:ay)?|了解|はい|うん|ありがとう(?:ございます)?|thanks|thx|なるほど)[.!。！]*$/iu.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+  return !/(?:エラー|失敗|違う|訂正|修正中|処理中|待って|error|failed|correction|actually)/iu.test(
+    text,
+  );
+};
 
 const resolveQueueApi = (
   first?: QueueApi | string,
