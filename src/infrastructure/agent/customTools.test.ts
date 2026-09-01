@@ -9,10 +9,14 @@ import {
 } from "../../core/types";
 import {
   KnowledgeAccessService,
+  KnowledgeAccessAnalysisModel,
+  KnowledgeRepository,
   SavedArticle,
   SearchResultItem,
+  WebClient,
   WebListItem,
   WebPage,
+  createKnowledgeAccessService,
 } from "@chat-agent/knowledge-access";
 import { AgentRuntimeContext } from "./runtimeContext";
 
@@ -95,10 +99,6 @@ class MemoryStoreStub implements UserMemoryStore {
     const saved = { id: this.notes.length + 1, note, createdAt: new Date("2026-01-01T00:00:00.000Z") };
     this.notes.push(saved);
     return saved;
-  }
-
-  async readMemoryFile(path: string): Promise<string> {
-    return `file:${path}`;
   }
 
   async searchUserNotes() {
@@ -220,6 +220,45 @@ test("save_web_knowledge fetches and stores article", async () => {
   expect(service.savedWebKnowledgeInput?.url).toBe("https://example.com/page");
 });
 
+test("save_web_knowledge fetches the page exactly once", async () => {
+  let fetchCount = 0;
+  const webClient: WebClient = {
+    webList: async () => [],
+    webPage: async (url) => {
+      fetchCount += 1;
+      return { url, title: "single fetch", markdown: "body" };
+    },
+  };
+  const repository: KnowledgeRepository = {
+    saveArticle: async (article) => ({
+      ...article,
+      id: "saved-1",
+      createdAt: new Date("2026-09-01T00:00:00.000Z"),
+    }),
+    getSavedArticleById: async () => null,
+    getSavedArticleByUrl: async () => null,
+    searchSavedKnowledge: async () => [],
+  };
+  const analysisModel: KnowledgeAccessAnalysisModel = {
+    generateJson: async <T>() =>
+      ({ summary: "summary", content: "content", tags: [] }) as T,
+  };
+  const tools = createCustomTools({
+    ...createDeps(),
+    knowledgeAccessService: createKnowledgeAccessService({
+      repository,
+      webClient,
+      analysisModel,
+    }),
+  });
+
+  await findTool(tools, "save_web_knowledge").invoke({
+    url: "https://example.com/once",
+  });
+
+  expect(fetchCount).toBe(1);
+});
+
 test("search_saved_knowledge returns search results", async () => {
   const tools = createCustomTools(createDeps());
 
@@ -271,13 +310,25 @@ test("memory tools use trusted runtime user ID and do not expose userId in schem
   expect(memoryStore.userIds).toEqual(["discord-user-42"]);
 });
 
-test("read_memory_file returns file content", async () => {
-  const tools = createCustomTools(createDeps());
+test("registers one canonical tool for each UserMemory operation", () => {
+  const names = createCustomTools(createDeps()).map((candidate) => candidate.name);
 
-  const result = await findTool(tools, "read_memory_file").invoke({ path: "/memories/research-notes.md" });
-  const parsed = JSON.parse(result as string) as { path: string; content: string };
-  expect(parsed.path).toBe("/memories/research-notes.md");
-  expect(parsed.content).toContain("file:/memories/research-notes.md");
+  expect(names).toEqual([
+    "web_list",
+    "web_page",
+    "save_web_knowledge",
+    "search_saved_knowledge",
+    "get_saved_article",
+    "remember_user_note",
+    "search_user_notes",
+    "replace_user_note",
+    "delete_user_note",
+    "remember_daily_event",
+    "search_daily_events",
+    "get_daily_events_by_date",
+    "enqueue_task",
+    "get_queue_status",
+  ]);
 });
 
 test("get_saved_article returns lightweight payload by default", async () => {
