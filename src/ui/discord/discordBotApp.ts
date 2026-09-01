@@ -14,6 +14,7 @@ export interface DiscordTransport {
 export class DiscordBotApp {
   private readonly queueApi: QueueApi;
   private readonly worker: QueueWorker;
+  private readonly pendingInteractionByThread = new Map<string, string>();
 
   constructor(
     private readonly identity: BotIdentity,
@@ -157,13 +158,18 @@ export class DiscordBotApp {
       return;
     }
     const timestamp = new Date().toISOString();
+    const sourceInteractionId =
+      task.source === "user"
+        ? (task.sourceInteractionId ??
+          this.pendingInteractionByThread.get(task.targetThreadId))
+        : task.sourceInteractionId;
     try {
       await this.onTurnRecorded({
         botId: this.identity.botId,
         threadId: task.targetThreadId,
         kind: task.source === "user" ? "human" : "proactive",
-        ...(task.sourceInteractionId
-          ? { sourceInteractionId: task.sourceInteractionId }
+        ...(sourceInteractionId
+          ? { sourceInteractionId }
           : {}),
         messages: [
           { role: "user", content: task.text, timestampIso: timestamp },
@@ -175,6 +181,14 @@ export class DiscordBotApp {
         ],
         createdAtIso: timestamp,
       });
+      if (task.source === "user") {
+        this.pendingInteractionByThread.delete(task.targetThreadId);
+      } else if (sourceInteractionId) {
+        this.pendingInteractionByThread.set(
+          task.targetThreadId,
+          sourceInteractionId,
+        );
+      }
     } catch (error: unknown) {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
