@@ -7,7 +7,9 @@ const createTask = (id: string, text: string): QueueTask => ({
   action: "mention",
   text,
   channelId: "c1",
+  userId: "u1",
   targetThreadId: "c1:u1",
+  conversationVersion: 1,
   source: "user",
   authorId: "u1",
   mentionsBot: true,
@@ -32,6 +34,7 @@ test("processes queued tasks sequentially when a new task arrives during process
       acked.push(taskId);
     },
     release: async () => {},
+    getLatestConversationVersion: async () => 0,
   };
 
   const worker = new QueueWorker(queue, async (task) => {
@@ -81,6 +84,7 @@ test("does not re-run a handled task when ack fails", async () => {
     release: async () => {
       throw new Error("release must not be called after successful handling");
     },
+    getLatestConversationVersion: async () => 0,
   };
 
   const worker = new QueueWorker(queue, async (picked) => {
