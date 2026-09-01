@@ -77,6 +77,15 @@ test("removes completed topics and commitments", () => {
   expect(focus).toEqual({ currentTopicStatus: "complete" });
 });
 
+test("removes a previously unresolved question after explicit completion", () => {
+  const focus = deriveConversationFocus([
+    turn("CIが失敗する理由は何ですか？", "ログを確認して後で共有します。"),
+    turn("この件は解決しました", "確認と共有が完了しました。", "human", 1),
+  ]);
+
+  expect(focus).toEqual({ currentTopicStatus: "complete" });
+});
+
 test("ignores proactive and delegation records as user focus evidence", () => {
   const focus = deriveConversationFocus([
     turn("内部指示: 新しい話題を出して？", "proactive response", "proactive"),
