@@ -25,20 +25,20 @@ interface MemorySystemService {
   }): Promise<
     Array<{
       id: string;
-      state: string;
-      action: string;
-      outcome: string;
-      confidence: "low" | "medium" | "high";
+      appliesWhen: string;
+      recommendedBehavior: string;
+      avoidBehavior?: string;
+      episodeIds: string[];
     }>
   >;
 }
 
 export interface MemoryPolicyCard {
   id: string;
-  state: string;
-  action: string;
-  outcome: string;
-  confidence: "low" | "medium" | "high";
+  appliesWhen: string;
+  recommendedBehavior: string;
+  avoidBehavior?: string;
+  episodeIds: string[];
 }
 
 export interface MemorySystemClient {
@@ -57,6 +57,24 @@ export interface MemorySystemClientOptions {
   ollamaModel: string;
   ollamaApiKey?: string;
 }
+
+export const formatPolicyCardsForPrompt = (
+  cards: MemoryPolicyCard[],
+): string => {
+  const header =
+    "以下は経験に基づくタスク達成の抽象的な手順です。\n" +
+    "完全に従う必要はありませんが、参考にしてください。\n" +
+    "appliesWhen: この方針を適用する会話・タスクの条件\n" +
+    "recommendedBehavior: 推奨する応答方針\n" +
+    "avoidBehavior: 避けるべき応答（記載がある場合）";
+  const body = cards
+    .map(
+      (card) =>
+        `- appliesWhen: ${card.appliesWhen}\n  recommendedBehavior: ${card.recommendedBehavior}${card.avoidBehavior ? `\n  avoidBehavior: ${card.avoidBehavior}` : ""}`,
+    )
+    .join("\n");
+  return `${header}\n\n${body}`;
+};
 
 export const createMemorySystemClient = (
   options: MemorySystemClientOptions,
@@ -98,6 +116,7 @@ const loadMemorySystemService = (
   options: MemorySystemClientOptions,
 ): MemorySystemService | null => {
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("@chat-agent/memory-system") as {
       createMemorySystemService?: (params: {
         postgresUrl: string;
