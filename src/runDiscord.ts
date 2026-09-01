@@ -27,7 +27,6 @@ import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { join } from "node:path";
-import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import {
   createMemorySystemClient,
   formatPolicyCardsForPrompt,
@@ -47,7 +46,6 @@ import {
 
 const main = async (): Promise<void> => {
   console.log("start!");
-  patchLangChainUuidV4();
   const deepagents = await import("deepagents");
   const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
     model: unknown;

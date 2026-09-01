@@ -95,10 +95,10 @@ export const deriveConversationFocus = (
     ...(explicitlyComplete || !currentTopic
       ? {}
       : { currentTopic: truncate(currentTopic) }),
-    ...(unresolvedQuestion
+    ...(!explicitlyComplete && unresolvedQuestion
       ? { unresolvedQuestion: truncate(unresolvedQuestion) }
       : {}),
-    ...(agentCommitment
+    ...(!explicitlyComplete && agentCommitment
       ? { agentCommitment: truncate(agentCommitment) }
       : {}),
     ...(!explicitlyComplete && resumableTopic

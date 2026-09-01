@@ -9,7 +9,6 @@ import {
 import { loadEnv } from "./config/env";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
-import { patchLangChainUuidV4 } from "./infrastructure/agent/langchainCompat";
 import {
   createMemorySystemClient,
   formatPolicyCardsForPrompt,
@@ -17,7 +16,6 @@ import {
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
 
 const main = async (): Promise<void> => {
-  patchLangChainUuidV4();
   const deepagents = await import("deepagents");
   const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
     model: unknown;
