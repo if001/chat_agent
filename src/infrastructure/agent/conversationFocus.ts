@@ -11,6 +11,8 @@ export interface ConversationFocus {
 export interface ConversationAnalysis {
   focus: ConversationFocus | null;
   reason: string;
+  conversationTrigger: "eligible" | "ineligible";
+  conversationTriggerReason: string;
 }
 
 export interface ConversationAnalysisInput {
@@ -34,6 +36,8 @@ interface RawConversationAnalysis {
   resumableTopic?: string;
   currentTopicStatus?: string;
   reason?: string;
+  conversationTrigger?: string;
+  conversationTriggerReason?: string;
 }
 
 const DEFAULT_HISTORY_LIMIT = 12;
@@ -56,7 +60,7 @@ export const createConversationAnalysisService = (options: {
     async analyze(input) {
       const currentInput = normalizeInput(input.currentContext);
       if (!currentInput) {
-        return { focus: null, reason: "current input is empty" };
+        return ineligibleAnalysis("current input is empty");
       }
       const records = await options.reader.listRecentTurnRecords({
         botId: input.botId,
@@ -76,6 +80,9 @@ export const createConversationAnalysisService = (options: {
             currentTopicStatus: "active",
           },
           reason: "no prior human conversation history",
+          conversationTrigger: "ineligible",
+          conversationTriggerReason:
+            "the first request establishes an active topic",
         };
       }
       let parsed: RawConversationAnalysis;
@@ -86,8 +93,10 @@ export const createConversationAnalysisService = (options: {
             "Infer meaning rather than relying on punctuation or fixed keywords.",
             "Distinguish the current topic from a different topic that can be resumed later.",
             "Recognize unanswered questions, implicit agent commitments, completion, topic changes, and returns to earlier topics.",
+            "Also decide whether exactly one additional proactive topic can be integrated naturally into the normal reply.",
+            "conversationTrigger must be eligible or ineligible. Use ineligible for active focus, acknowledgement, correction, error reporting, or work still in progress. Do not reject a technical question merely because it discusses errors or corrections.",
             "currentTopicStatus must be active, complete, or none.",
-            "Return JSON with optional currentTopic, unresolvedQuestion, agentCommitment, resumableTopic, currentTopicStatus, and a short reason.",
+            "Return JSON with optional currentTopic, unresolvedQuestion, agentCommitment, resumableTopic, currentTopicStatus, a short focus reason, conversationTrigger, and a short conversationTriggerReason.",
           ].join(" "),
           JSON.stringify({
             humanConversationHistory: history,
@@ -95,7 +104,7 @@ export const createConversationAnalysisService = (options: {
           }),
         );
       } catch {
-        return { focus: null, reason: "conversation analysis failed" };
+        return ineligibleAnalysis("conversation analysis failed");
       }
       return normalizeAnalysis(parsed);
     },
@@ -165,11 +174,16 @@ const normalizeAnalysis = (
 ): ConversationAnalysis => {
   const status = value?.currentTopicStatus;
   const reason = value?.reason?.trim();
+  const conversationTrigger = value?.conversationTrigger;
+  const conversationTriggerReason = value?.conversationTriggerReason?.trim();
   if (
     !reason ||
+    !conversationTriggerReason ||
+    (conversationTrigger !== "eligible" &&
+      conversationTrigger !== "ineligible") ||
     (status !== "active" && status !== "complete" && status !== "none")
   ) {
-    return { focus: null, reason: "invalid conversation analysis output" };
+    return ineligibleAnalysis("invalid conversation analysis output");
   }
   const focus: ConversationFocus = {
     ...optionalField("currentTopic", value?.currentTopic),
@@ -178,8 +192,20 @@ const normalizeAnalysis = (
     ...optionalField("resumableTopic", value?.resumableTopic),
     currentTopicStatus: status,
   };
-  return { focus, reason: truncate(reason) };
+  return {
+    focus,
+    reason: truncate(reason),
+    conversationTrigger,
+    conversationTriggerReason: truncate(conversationTriggerReason),
+  };
 };
+
+const ineligibleAnalysis = (reason: string): ConversationAnalysis => ({
+  focus: null,
+  reason,
+  conversationTrigger: "ineligible",
+  conversationTriggerReason: reason,
+});
 
 const optionalField = <K extends keyof Omit<ConversationFocus, "currentTopicStatus">>(
   key: K,

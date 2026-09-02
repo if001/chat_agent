@@ -37,6 +37,8 @@ test("recognizes a question without question-mark punctuation", async () => {
     unresolvedQuestion: "CIが失敗する理由を教えて",
     currentTopicStatus: "active",
     reason: "user is asking for an unresolved explanation",
+    conversationTrigger: "ineligible",
+    conversationTriggerReason: "the technical question is active focus",
   });
 
   const result = await fixture.service.analyze(input("CIが失敗する理由を教えて"));
@@ -56,6 +58,8 @@ test("recognizes an implicit agent commitment", async () => {
       agentCommitment: "ログまで追って結果を持ってくる",
       currentTopicStatus: "active",
       reason: "assistant implicitly promised a later result",
+      conversationTrigger: "ineligible",
+      conversationTriggerReason: "work is still in progress",
     },
   );
 
@@ -70,6 +74,8 @@ test("recognizes paraphrased completion", async () => {
     {
       currentTopicStatus: "complete",
       reason: "the user says no further work is necessary",
+      conversationTrigger: "eligible",
+      conversationTriggerReason: "the prior topic is complete",
     },
   );
 
@@ -91,6 +97,8 @@ test("separates current and resumable topics and handles a return", async () => 
       resumableTopic: "CIの失敗調査",
       currentTopicStatus: "active",
       reason: "the user returned to the earlier authentication topic",
+      conversationTrigger: "ineligible",
+      conversationTriggerReason: "the returned topic is active",
     },
   );
 
@@ -115,6 +123,8 @@ test("excludes proactive and delegation instructions from analyzer input", async
       currentTopic: "visible human topic",
       currentTopicStatus: "active",
       reason: "visible human history only",
+      conversationTrigger: "ineligible",
+      conversationTriggerReason: "the visible topic is active",
     },
   );
 
@@ -136,6 +146,8 @@ test("enforces history limits and calls the analyzer at most once", async () => 
       currentTopic: "bounded",
       currentTopicStatus: "active",
       reason: "bounded input",
+      conversationTrigger: "ineligible",
+      conversationTriggerReason: "bounded fixture",
     },
     { historyLimit: 4, maxItemLength: 80, maxHistoryChars: 240 },
   );
@@ -158,6 +170,8 @@ test("handles empty input and no history deterministically", async () => {
   expect(await empty.service.analyze(input("   "))).toEqual({
     focus: null,
     reason: "current input is empty",
+    conversationTrigger: "ineligible",
+    conversationTriggerReason: "current input is empty",
   });
   expect(empty.calls).toHaveLength(0);
 
@@ -177,8 +191,55 @@ test("falls back to no focus for invalid analyzer output", async () => {
   await expect(fixture.service.analyze(input("continue"))).resolves.toEqual({
     focus: null,
     reason: "invalid conversation analysis output",
+    conversationTrigger: "ineligible",
+    conversationTriggerReason: "invalid conversation analysis output",
   });
 });
+
+test("keeps a technical error-handling question semantically eligible when focus permits", async () => {
+  const fixture = createFixture(
+    [turn("前の話題は完了", "了解しました")],
+    {
+      currentTopic: "エラー処理の設計",
+      currentTopicStatus: "complete",
+      reason: "the current reply can conclude the technical explanation",
+      conversationTrigger: "eligible",
+      conversationTriggerReason:
+        "error is the technical subject, not an incident report",
+    },
+  );
+
+  const result = await fixture.service.analyze(
+    input("エラー処理の設計パターンを教えて"),
+  );
+
+  expect(result.conversationTrigger).toBe("eligible");
+  expect(result.conversationTriggerReason).toContain("technical subject");
+  expect(fixture.calls).toHaveLength(1);
+});
+
+test.each([
+  ["そこではなく前提を訂正したい", "correction is in progress"],
+  ["結果を確認しているところです", "work is still in progress"],
+  ["その理解で合っています", "short semantic acknowledgement"],
+] as const)(
+  "marks semantic interruption as ineligible: %s",
+  async (currentContext, triggerReason) => {
+    const fixture = createFixture([turn("topic", "answer")], {
+      currentTopic: "topic",
+      currentTopicStatus: "active",
+      reason: "the current topic remains active",
+      conversationTrigger: "ineligible",
+      conversationTriggerReason: triggerReason,
+    });
+
+    const result = await fixture.service.analyze(input(currentContext));
+
+    expect(result.conversationTrigger).toBe("ineligible");
+    expect(result.conversationTriggerReason).toBe(triggerReason);
+    expect(fixture.calls).toHaveLength(1);
+  },
+);
 
 test("bounds formatted focus output", () => {
   const formatted = formatConversationFocus({

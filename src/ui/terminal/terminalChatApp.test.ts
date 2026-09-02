@@ -75,7 +75,12 @@ test("passes fresh policy context per turn while keeping the system prompt stati
     {
       analyze: async () => {
         analysisCalls += 1;
-        return { focus: null, reason: "test" };
+        return {
+          focus: null,
+          reason: "test",
+          conversationTrigger: "ineligible",
+          conversationTriggerReason: "test",
+        };
       },
     },
   );
@@ -134,6 +139,8 @@ test("builds shared memory, daily event, time, policy, and focus context", async
           currentTopicStatus: "active",
         },
         reason: "test focus",
+        conversationTrigger: "ineligible",
+        conversationTriggerReason: "test focus",
       }),
     },
   );

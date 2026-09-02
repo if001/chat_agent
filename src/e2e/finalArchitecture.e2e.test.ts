@@ -182,6 +182,8 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
             ? {
                 currentTopicStatus: "complete",
                 reason: "fixture topic was completed",
+                conversationTrigger: "eligible",
+                conversationTriggerReason: "fixture topic is complete",
               }
             : {
                 currentTopic: "CIが失敗する理由は何ですか？",
@@ -189,6 +191,8 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
                 agentCommitment: "ログを確認して後で共有します。",
                 currentTopicStatus: "active",
                 reason: "fixture returned to unresolved CI investigation",
+                conversationTrigger: "ineligible",
+                conversationTriggerReason: "fixture topic is active",
               }) as T,
       },
     });
