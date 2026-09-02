@@ -22,7 +22,7 @@ import { createUserMemoryWritePlanner } from "./infrastructure/memory/userMemory
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
-import { createConversationFocusSource } from "./infrastructure/agent/conversationFocus";
+import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
 import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
@@ -245,9 +245,14 @@ const main = async (): Promise<void> => {
       ),
     ),
   });
-  const conversationFocusSource = createConversationFocusSource(
-    turnRecordReader,
-  );
+  const conversationAnalysisService = createConversationAnalysisService({
+    reader: turnRecordReader,
+    model: createOllamaDialoguePlanningModel(
+      env.ollamaBaseUrl,
+      env.ollamaChatModel,
+      env.ollamaApiKey,
+    ),
+  });
   const pendingInteractionResolver = createPendingInteractionResolver({
     turnRecordReader,
     interactionLogStore,
@@ -269,7 +274,7 @@ const main = async (): Promise<void> => {
       },
     },
     undefined,
-    conversationFocusSource,
+    conversationAnalysisService,
   );
   const app = new DiscordBotApp(
     identity,
@@ -287,8 +292,7 @@ const main = async (): Promise<void> => {
         userId,
         trigger: "conversation",
       }),
-    ({ botId, threadId }) =>
-      conversationFocusSource.load({ botId, threadId }),
+    (input) => conversationAnalysisService.analyze(input),
     (input) => pendingInteractionResolver.resolve(input),
   );
   app.start();

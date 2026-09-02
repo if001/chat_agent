@@ -2,6 +2,7 @@ import { QueueApi, QueueTask } from "@chat-agent/queue";
 import { DiscordBotApp, DiscordTransport } from "./discordBotApp";
 import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
+import type { ConversationFocus } from "../../infrastructure/agent/conversationFocus";
 
 const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 
@@ -477,6 +478,8 @@ test.each([
     const transport = new TransportStub();
     const runtime = new RuntimeStub();
     const planned: string[] = [];
+    const analyzed: string[] = [];
+    const contextualized: Array<ConversationFocus | null | undefined> = [];
     const app = new DiscordBotApp(
       identity,
       runtime,
@@ -485,7 +488,10 @@ test.each([
       undefined,
       undefined,
       undefined,
-      undefined,
+      async ({ conversationFocus }) => {
+        contextualized.push(conversationFocus);
+        return undefined;
+      },
       async () => {
         planned.push("planned");
         return {
@@ -493,10 +499,16 @@ test.each([
           sourceInteractionId: "conversation-focus-1",
         };
       },
-      async () => ({
-        currentTopic: "現在の作業",
-        currentTopicStatus,
-      }),
+      async ({ currentContext }) => {
+        analyzed.push(currentContext);
+        return {
+          focus: {
+            currentTopic: "現在の作業",
+            currentTopicStatus,
+          },
+          reason: "test analysis",
+        };
+      },
     );
 
     app.start();
@@ -508,6 +520,13 @@ test.each([
     });
 
     expect(planned).toHaveLength(expectedPlans);
+    expect(analyzed).toHaveLength(1);
+    expect(contextualized).toEqual([
+      {
+        currentTopic: "現在の作業",
+        currentTopicStatus,
+      },
+    ]);
     expect(transport.sent).toHaveLength(1);
   },
 );

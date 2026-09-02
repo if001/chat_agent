@@ -1,8 +1,7 @@
 import { TurnRecord } from "@chat-agent/memory-system";
 import {
   CONVERSATION_FOCUS_MAX_CHARS,
-  createConversationFocusSource,
-  deriveConversationFocus,
+  createConversationAnalysisService,
   formatConversationFocus,
 } from "./conversationFocus";
 
@@ -16,98 +15,172 @@ const turn = (
   threadId: "thread-1",
   kind,
   messages: [
-    { role: "user", content: user, timestampIso: `2026-09-01T00:00:0${index}.000Z` },
-    { role: "assistant", content: assistant, timestampIso: `2026-09-01T00:00:0${index}.000Z` },
+    {
+      role: "user",
+      content: user,
+      timestampIso: `2026-09-01T00:00:${index.toString().padStart(2, "0")}.000Z`,
+    },
+    {
+      role: "assistant",
+      content: assistant,
+      timestampIso: `2026-09-01T00:00:${index.toString().padStart(2, "0")}.000Z`,
+    },
   ],
-  createdAtIso: `2026-09-01T00:00:0${index}.000Z`,
+  createdAtIso: `2026-09-01T00:00:${index.toString().padStart(2, "0")}.000Z`,
 });
 
-test("keeps an explicitly deferred user question unresolved", () => {
-  const focus = deriveConversationFocus([
-    turn("CIが失敗する理由は何ですか？", "ログを確認して後で共有します。"),
-  ]);
+test("recognizes a question without question-mark punctuation", async () => {
+  const fixture = createFixture([
+    turn("CIの失敗を調べたい", "ログを確認します"),
+  ], {
+    currentTopic: "CIの失敗原因",
+    unresolvedQuestion: "CIが失敗する理由を教えて",
+    currentTopicStatus: "active",
+    reason: "user is asking for an unresolved explanation",
+  });
 
-  expect(focus).toMatchObject({
-    unresolvedQuestion: "CIが失敗する理由は何ですか？",
-    agentCommitment: "ログを確認して後で共有します。",
+  const result = await fixture.service.analyze(input("CIが失敗する理由を教えて"));
+
+  expect(result.focus).toMatchObject({
+    unresolvedQuestion: "CIが失敗する理由を教えて",
     currentTopicStatus: "active",
   });
+  expect(fixture.calls).toHaveLength(1);
 });
 
-test("tracks an unanswered agent question until a substantive reply", () => {
-  const waiting = deriveConversationFocus([
-    turn("設定を直したい", "対象の環境は本番ですか？"),
-  ]);
-  const answered = deriveConversationFocus([
-    turn("設定を直したい", "対象の環境は本番ですか？"),
-    turn("開発環境です", "了解しました。開発環境を確認します。", "human", 1),
-  ]);
-
-  expect(waiting?.unresolvedQuestion).toBe("対象の環境は本番ですか？");
-  expect(answered?.unresolvedQuestion).toBeUndefined();
-});
-
-test("keeps a resumable topic across a temporary topic change and restores it", () => {
-  const records = [
-    turn("認証設計の続きを検討したい", "選択肢を整理します。"),
-    turn("ところで先にCIエラーを直したい", "CIログを見てみましょう。", "human", 1),
-  ];
-  const changed = deriveConversationFocus(records);
-  const returned = deriveConversationFocus(
-    records,
-    "元の認証設計の話に戻って続きを進めよう",
+test("recognizes an implicit agent commitment", async () => {
+  const fixture = createFixture(
+    [turn("設定を見てほしい", "ログまで追って結果を持ってきます")],
+    {
+      currentTopic: "設定調査",
+      agentCommitment: "ログまで追って結果を持ってくる",
+      currentTopicStatus: "active",
+      reason: "assistant implicitly promised a later result",
+    },
   );
 
-  expect(changed).toMatchObject({
-    currentTopic: "ところで先にCIエラーを直したい",
-    resumableTopic: "認証設計の続きを検討したい",
-  });
-  expect(returned).toMatchObject({
-    currentTopic: "認証設計の続きを検討したい",
-  });
+  const result = await fixture.service.analyze(input("進捗を待っています"));
+
+  expect(result.focus?.agentCommitment).toContain("結果を持ってくる");
 });
 
-test("removes completed topics and commitments", () => {
-  const focus = deriveConversationFocus([
-    turn("設定を確認して", "設定を確認して後で共有します。"),
-    turn("進捗は？", "設定の確認と共有が完了しました。", "human", 1),
-    turn("この件は解決しました", "了解しました。", "human", 2),
-  ]);
-
-  expect(focus).toEqual({ currentTopicStatus: "complete" });
-});
-
-test("removes a previously unresolved question after explicit completion", () => {
-  const focus = deriveConversationFocus([
-    turn("CIが失敗する理由は何ですか？", "ログを確認して後で共有します。"),
-    turn("この件は解決しました", "確認と共有が完了しました。", "human", 1),
-  ]);
-
-  expect(focus).toEqual({ currentTopicStatus: "complete" });
-});
-
-test("ignores proactive and delegation records as user focus evidence", () => {
-  const focus = deriveConversationFocus([
-    turn("内部指示: 新しい話題を出して？", "proactive response", "proactive"),
-    turn("アカへ調査を依頼します？", "delegated response", "delegation", 1),
-  ]);
-
-  expect(focus).toBeNull();
-});
-
-test("limits history reads and formatted output, and handles empty history", async () => {
-  const calls: unknown[] = [];
-  const source = createConversationFocusSource({
-    listRecentTurnRecords: async (input) => {
-      calls.push(input);
-      return [];
+test("recognizes paraphrased completion", async () => {
+  const fixture = createFixture(
+    [turn("CIを直したい", "原因を確認します")],
+    {
+      currentTopicStatus: "complete",
+      reason: "the user says no further work is necessary",
     },
-  });
-  expect(
-    await source.load({ botId: "ao", threadId: "thread-1" }),
-  ).toBeNull();
-  expect(calls).toEqual([{ botId: "ao", threadId: "thread-1", limit: 12 }]);
+  );
 
+  const result = await fixture.service.analyze(
+    input("必要なところまで片付いたので、ここで区切れます"),
+  );
+
+  expect(result.focus).toEqual({ currentTopicStatus: "complete" });
+});
+
+test("separates current and resumable topics and handles a return", async () => {
+  const fixture = createFixture(
+    [
+      turn("認証設計を進めたい", "選択肢を整理します"),
+      turn("CIの失敗も見て", "まずCIログを確認します", "human", 1),
+    ],
+    {
+      currentTopic: "認証設計",
+      resumableTopic: "CIの失敗調査",
+      currentTopicStatus: "active",
+      reason: "the user returned to the earlier authentication topic",
+    },
+  );
+
+  const result = await fixture.service.analyze(
+    input("認証設計の続きに戻って進めよう"),
+  );
+
+  expect(result.focus).toMatchObject({
+    currentTopic: "認証設計",
+    resumableTopic: "CIの失敗調査",
+  });
+});
+
+test("excludes proactive and delegation instructions from analyzer input", async () => {
+  const fixture = createFixture(
+    [
+      turn("visible human topic", "visible answer"),
+      turn("internal proactive instruction", "proactive output", "proactive", 1),
+      turn("internal delegation instruction", "delegated output", "delegation", 2),
+    ],
+    {
+      currentTopic: "visible human topic",
+      currentTopicStatus: "active",
+      reason: "visible human history only",
+    },
+  );
+
+  await fixture.service.analyze(input("continue visible topic"));
+
+  expect(fixture.calls[0]).toContain("visible human topic");
+  expect(fixture.calls[0]).not.toContain("internal proactive|internal delegation");
+  expect(fixture.calls[0]).not.toContain("internal proactive instruction");
+  expect(fixture.calls[0]).not.toContain("internal delegation instruction");
+});
+
+test("enforces history limits and calls the analyzer at most once", async () => {
+  const records = Array.from({ length: 20 }, (_, index) =>
+    turn(`user-${index}-${"x".repeat(500)}`, `assistant-${index}-${"y".repeat(500)}`, "human", index),
+  );
+  const fixture = createFixture(
+    records,
+    {
+      currentTopic: "bounded",
+      currentTopicStatus: "active",
+      reason: "bounded input",
+    },
+    { historyLimit: 4, maxItemLength: 80, maxHistoryChars: 240 },
+  );
+
+  await fixture.service.analyze(input("latest"));
+
+  expect(fixture.readerCalls).toEqual([
+    { botId: "ao", threadId: "thread-1", limit: 4 },
+  ]);
+  expect(fixture.calls).toHaveLength(1);
+  const parsed = JSON.parse(fixture.calls[0] ?? "{}") as {
+    humanConversationHistory: string[];
+  };
+  expect(parsed.humanConversationHistory.join("").length).toBeLessThanOrEqual(240);
+  expect(parsed.humanConversationHistory.every((item) => item.length <= 80)).toBe(true);
+});
+
+test("handles empty input and no history deterministically", async () => {
+  const empty = createFixture([], null);
+  expect(await empty.service.analyze(input("   "))).toEqual({
+    focus: null,
+    reason: "current input is empty",
+  });
+  expect(empty.calls).toHaveLength(0);
+
+  const noHistory = createFixture([], null);
+  expect(await noHistory.service.analyze(input("first topic"))).toMatchObject({
+    focus: { currentTopic: "first topic", currentTopicStatus: "active" },
+  });
+  expect(noHistory.calls).toHaveLength(0);
+});
+
+test("falls back to no focus for invalid analyzer output", async () => {
+  const fixture = createFixture(
+    [turn("topic", "answer")],
+    { currentTopicStatus: "unexpected" },
+  );
+
+  await expect(fixture.service.analyze(input("continue"))).resolves.toEqual({
+    focus: null,
+    reason: "invalid conversation analysis output",
+  });
+});
+
+test("bounds formatted focus output", () => {
   const formatted = formatConversationFocus({
     currentTopic: "a".repeat(2_000),
     unresolvedQuestion: "b".repeat(2_000),
@@ -117,3 +190,38 @@ test("limits history reads and formatted output, and handles empty history", asy
   });
   expect(formatted?.length).toBeLessThanOrEqual(CONVERSATION_FOCUS_MAX_CHARS);
 });
+
+const input = (currentContext: string) => ({
+  botId: "ao",
+  threadId: "thread-1",
+  currentContext,
+});
+
+const createFixture = (
+  records: TurnRecord[],
+  output: unknown,
+  limits: {
+    historyLimit?: number;
+    maxItemLength?: number;
+    maxHistoryChars?: number;
+  } = {},
+) => {
+  const calls: string[] = [];
+  const readerCalls: unknown[] = [];
+  const service = createConversationAnalysisService({
+    reader: {
+      listRecentTurnRecords: async (readerInput) => {
+        readerCalls.push(readerInput);
+        return records;
+      },
+    },
+    model: {
+      generateJson: async <T>(_systemPrompt: string, userPrompt: string) => {
+        calls.push(userPrompt);
+        return output as T;
+      },
+    },
+    ...limits,
+  });
+  return { service, calls, readerCalls };
+};
