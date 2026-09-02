@@ -6,6 +6,7 @@ import {
   UserMemoryStore,
 } from "../../core/types";
 import { TrustedAgentContext } from "./runtimeContext";
+import { UserMemoryWritePlanner } from "../memory/userMemoryWritePlanner";
 
 interface TrustedContextReader {
   current(): TrustedAgentContext;
@@ -14,6 +15,7 @@ interface TrustedContextReader {
 export interface CustomToolDeps {
   knowledgeAccessService: KnowledgeAccessService;
   userMemoryStore: UserMemoryStore;
+  userMemoryWritePlanner: UserMemoryWritePlanner;
   dailyEventRepository?: DailyEventRepository;
   botId: string;
   runtimeContext: TrustedContextReader;
@@ -175,11 +177,13 @@ export const createCustomTools = (deps: CustomToolDeps) => {
           error: `This content belongs in ${destination}, not UserMemory.`,
         });
       }
-      const saved = await deps.userMemoryStore.rememberUserNote(
-        deps.runtimeContext.current().userId,
-        note,
+      return JSON.stringify(
+        await executeUserMemoryWrite(
+          deps,
+          deps.runtimeContext.current().userId,
+          note,
+        ),
       );
-      return JSON.stringify({ ok: true, note: saved });
     },
     {
       name: "remember_user_note",
@@ -218,12 +222,14 @@ export const createCustomTools = (deps: CustomToolDeps) => {
           error: `This content belongs in ${destination}, not UserMemory.`,
         });
       }
-      const saved = await deps.userMemoryStore.replaceUserNote(
-        deps.runtimeContext.current().userId,
-        noteId,
-        note,
+      return JSON.stringify(
+        await executeUserMemoryWrite(
+          deps,
+          deps.runtimeContext.current().userId,
+          note,
+          noteId,
+        ),
       );
-      return JSON.stringify({ ok: saved !== null, note: saved });
     },
     {
       name: "replace_user_note",
@@ -399,4 +405,103 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     enqueueTaskTool,
     getQueueStatusTool,
   ];
+};
+
+const executeUserMemoryWrite = async (
+  deps: Pick<
+    CustomToolDeps,
+    "userMemoryStore" | "userMemoryWritePlanner"
+  >,
+  userId: string,
+  proposedNote: string,
+  explicitTargetNoteId?: number,
+) => {
+  const [partialMatches, recentNotes] = await Promise.all([
+    deps.userMemoryStore.searchUserNotes(userId, proposedNote.trim(), 12),
+    deps.userMemoryStore.searchUserNotes(userId, "", 24),
+  ]);
+  const candidates = mergeUserNoteCandidates(
+    partialMatches,
+    recentNotes,
+    explicitTargetNoteId,
+  );
+  if (
+    explicitTargetNoteId !== undefined &&
+    !candidates.some((candidate) => candidate.id === explicitTargetNoteId)
+  ) {
+    return { ok: false, error: "The requested UserMemory note ID was not found." };
+  }
+  const decision = await deps.userMemoryWritePlanner.decide({
+    proposedNote,
+    candidates,
+    ...(explicitTargetNoteId !== undefined ? { explicitTargetNoteId } : {}),
+  });
+  if (!decision) {
+    return { ok: false, error: "UserMemory write decision was invalid." };
+  }
+  if (decision.action === "create") {
+    const note = await deps.userMemoryStore.rememberUserNote(
+      userId,
+      proposedNote,
+    );
+    return { ok: true, action: decision.action, reason: decision.reason, note };
+  }
+  const target = candidates.find(
+    (candidate) => candidate.id === decision.targetNoteId,
+  );
+  if (!target) {
+    return { ok: false, error: "UserMemory write target was not found." };
+  }
+  if (decision.action === "keep_existing") {
+    return {
+      ok: true,
+      action: decision.action,
+      reason: decision.reason,
+      note: target,
+    };
+  }
+  if (decision.action === "replace") {
+    const note = await deps.userMemoryStore.replaceUserNote(
+      userId,
+      target.id,
+      proposedNote,
+    );
+    return {
+      ok: note !== null,
+      action: decision.action,
+      reason: decision.reason,
+      note,
+    };
+  }
+  const deleted = await deps.userMemoryStore.deleteUserNote(userId, target.id);
+  return {
+    ok: deleted,
+    action: decision.action,
+    reason: decision.reason,
+    deletedNoteId: target.id,
+  };
+};
+
+const mergeUserNoteCandidates = (
+  partialMatches: Awaited<ReturnType<UserMemoryStore["searchUserNotes"]>>,
+  recentNotes: Awaited<ReturnType<UserMemoryStore["searchUserNotes"]>>,
+  explicitTargetNoteId?: number,
+) => {
+  const ordered = [...partialMatches, ...recentNotes];
+  const unique = ordered.filter(
+    (candidate, index) =>
+      ordered.findIndex((item) => item.id === candidate.id) === index,
+  );
+  if (explicitTargetNoteId === undefined) {
+    return unique.slice(0, 24);
+  }
+  const explicit = unique.find(
+    (candidate) => candidate.id === explicitTargetNoteId,
+  );
+  return explicit
+    ? [explicit, ...unique.filter((candidate) => candidate.id !== explicit.id)].slice(
+        0,
+        24,
+      )
+    : unique.slice(0, 24);
 };

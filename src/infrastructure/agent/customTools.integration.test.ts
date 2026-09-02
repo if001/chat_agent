@@ -108,6 +108,12 @@ integrationTest(
     const tools = createCustomTools({
       knowledgeAccessService,
       userMemoryStore: new InMemoryUserMemoryStore(),
+      userMemoryWritePlanner: {
+        decide: async () => ({
+          action: "create" as const,
+          reason: "integration fixture",
+        }),
+      },
       botId: "b1",
       runtimeContext: {
         current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),

@@ -18,6 +18,7 @@ import {
   createOllamaChatModelCloud,
 } from "./infrastructure/agent/ollamaChatModel";
 import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
+import { createUserMemoryWritePlanner } from "./infrastructure/memory/userMemoryWritePlanner";
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
@@ -132,6 +133,13 @@ const main = async (): Promise<void> => {
   const tools = createCustomTools({
     knowledgeAccessService,
     userMemoryStore,
+    userMemoryWritePlanner: createUserMemoryWritePlanner(
+      createOllamaDialoguePlanningModel(
+        env.ollamaBaseUrl,
+        env.ollamaChatModel,
+        env.ollamaApiKey,
+      ),
+    ),
     dailyEventRepository,
     botId: identity.botId,
     runtimeContext,
