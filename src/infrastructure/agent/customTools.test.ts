@@ -1,7 +1,4 @@
-import {
-  classifyMemoryDestination,
-  createCustomTools,
-} from "./customTools";
+import { createCustomTools } from "./customTools";
 import {
   DailyEvent,
   DailyEventRepository,
@@ -151,11 +148,16 @@ class MemoryWritePlannerStub implements UserMemoryWritePlanner {
       ? this.decideWith(input)
       : input.explicitTargetNoteId !== undefined
         ? {
+            destination: "user_memory" as const,
             action: "replace" as const,
             targetNoteId: input.explicitTargetNoteId,
             reason: "explicit correction",
           }
-        : { action: "create" as const, reason: "new note" };
+        : {
+            destination: "user_memory" as const,
+            action: "create" as const,
+            reason: "new note",
+          };
   }
 }
 
@@ -330,6 +332,7 @@ test("semantic duplicate keeps the existing UserMemory note with one planner cal
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
   });
   const planner = new MemoryWritePlannerStub(() => ({
+    destination: "user_memory",
     action: "keep_existing",
     targetNoteId: 1,
     reason: "same preference in different words",
@@ -363,6 +366,7 @@ test("semantic contradiction replaces only the selected UserMemory note", async 
     },
   );
   const planner = new MemoryWritePlannerStub(() => ({
+    destination: "user_memory",
     action: "replace",
     targetNoteId: 1,
     reason: "the preference was corrected",
@@ -387,6 +391,7 @@ test("new UserMemory note does not mutate unrelated candidates", async () => {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
   });
   const planner = new MemoryWritePlannerStub(() => ({
+    destination: "user_memory",
     action: "create",
     reason: "new stable preference",
   }));
@@ -406,6 +411,7 @@ test("rejects a planner target outside the candidate set", async () => {
   const deps = createDeps();
   const memoryStore = deps.userMemoryStore as MemoryStoreStub;
   const planner = new MemoryWritePlannerStub(() => ({
+    destination: "user_memory",
     action: "replace",
     targetNoteId: 999,
     reason: "invalid target",
@@ -555,25 +561,63 @@ test("explicit replacement rejects a nonexistent ID without an LLM call", async 
   expect(planner.calls).toHaveLength(0);
 });
 
-test("UserMemory boundary excludes dated events and proactive interest", async () => {
-  expect(classifyMemoryDestination("2026-05-06 にテストを追加した")).toBe(
-    "daily_event",
-  );
-  expect(
-    classifyMemoryDestination("scheduled proactive話題への興味はpositive"),
-  ).toBe("topic_state");
-  expect(classifyMemoryDestination("回答は簡潔な方を好む")).toBe(
-    "user_memory",
-  );
+test.each([
+  ["今日という曲が好き", "user_memory", true],
+  ["2026-10-01以降も回答は簡潔にしてほしい", "user_memory", true],
+  ["queueのテストを追加した", "reject", false],
+  ["scheduled proactive話題への興味はpositive", "topic_state", false],
+  ["覚えておいて", "reject", false],
+  ["2026-05-06 にqueueのテストを追加した", "daily_event", false],
+] as const)(
+  "uses one semantic write decision for %s",
+  async (note, destination, shouldStore) => {
+    const deps = createDeps();
+    const memoryStore = deps.userMemoryStore as MemoryStoreStub;
+    const planner = new MemoryWritePlannerStub(() =>
+      destination === "user_memory"
+        ? {
+            destination,
+            action: "create",
+            reason: "stable UserMemory",
+          }
+        : { destination, reason: "not UserMemory" },
+    );
+    const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
 
-  const tools = createCustomTools(createDeps());
-  const rejected = JSON.parse(
+    const result = JSON.parse(
+      (await findTool(tools, "remember_user_note").invoke({ note })) as string,
+    ) as { ok: boolean; destination?: string; error?: string };
+
+    expect(result.ok).toBe(shouldStore);
+    expect(memoryStore.notes.map((item) => item.note).includes(note)).toBe(
+      shouldStore,
+    );
+    if (!shouldStore) {
+      expect(result.destination).toBe(destination);
+    }
+    expect(planner.calls).toHaveLength(1);
+  },
+);
+
+test("daily event decision points to its explicit-date tool without transferring data", async () => {
+  const deps = createDeps();
+  const dailyEvents = deps.dailyEventRepository as DailyEventRepoStub;
+  const planner = new MemoryWritePlannerStub(() => ({
+    destination: "daily_event",
+    reason: "dated concrete occurrence",
+  }));
+  const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
+
+  const result = JSON.parse(
     (await findTool(tools, "remember_user_note").invoke({
-      note: "昨日、queueのテストを追加した",
+      note: "2026-05-06 にqueueのテストを追加した",
     })) as string,
   ) as { ok: boolean; error: string };
-  expect(rejected).toMatchObject({ ok: false });
-  expect(rejected.error).toContain("daily_event");
+
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("remember_daily_event");
+  expect(dailyEvents.remembered).toBeNull();
+  expect(planner.calls).toHaveLength(1);
 });
 
 test("remember_daily_event stores concise daily record", async () => {

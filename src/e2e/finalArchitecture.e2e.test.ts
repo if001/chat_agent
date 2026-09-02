@@ -136,6 +136,7 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     userMemoryStore,
     userMemoryWritePlanner: {
       decide: async ({ explicitTargetNoteId }) => ({
+        destination: "user_memory" as const,
         action: "replace" as const,
         targetNoteId: explicitTargetNoteId as number,
         reason: "fixture correction",
