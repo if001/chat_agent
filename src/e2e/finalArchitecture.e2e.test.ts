@@ -135,6 +135,13 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
   const tools = createCustomTools({
     knowledgeAccessService,
     userMemoryStore,
+    userMemoryWritePlanner: {
+      decide: async ({ explicitTargetNoteId }) => ({
+        action: "replace" as const,
+        targetNoteId: explicitTargetNoteId as number,
+        reason: "fixture correction",
+      }),
+    },
     dailyEventRepository,
     botId: "ao",
     runtimeContext: {
