@@ -10,10 +10,20 @@ import { loadEnv } from "./config/env";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
 import {
+  createDrizzleClient,
+  createPostgresPool,
+} from "@chat-agent/knowledge-access";
+import {
   createMemorySystemClient,
   formatPolicyCardsForPrompt,
 } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
+import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
+import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
+import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
+import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
+import { createPostgresTurnRecordReader } from "@chat-agent/memory-system";
+import { createOllamaDialoguePlanningModel } from "@chat-agent/simple-pomdp-system";
 
 const main = async (): Promise<void> => {
   const deepagents = await import("deepagents");
@@ -74,22 +84,41 @@ const main = async (): Promise<void> => {
     ollamaModel: env.ollamaChatModel,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
+  const pool = createPostgresPool(env.postgresUrl);
+  const db = createDrizzleClient(pool);
+  const turnRecordReader = createPostgresTurnRecordReader(env.postgresUrl);
+  const conversationAnalysisService = createConversationAnalysisService({
+    reader: turnRecordReader,
+    model: createOllamaDialoguePlanningModel(
+      env.ollamaBaseUrl,
+      env.ollamaChatModel,
+      env.ollamaApiKey,
+    ),
+  });
+  const requestContextBuilder = new RequestContextBuilder(
+    new PostgresUserMemoryStore(db),
+    new PostgresDailyEventRepository(db),
+    {
+      load: async ({ botId, threadId, currentContext }) => {
+        const cards = await memoryClient.queryApplicablePolicyCards({
+          botId,
+          threadId,
+          currentContext,
+          limit: 5,
+        });
+        return cards.length > 0
+          ? formatPolicyCardsForPrompt(cards)
+          : undefined;
+      },
+    },
+    undefined,
+    conversationAnalysisService,
+  );
   const app = new TerminalChatApp(
     identity,
     runtime,
     createTurnRecorder(memoryClient),
-    async ({ botId, threadId, currentContext }) => {
-      const cards = await memoryClient.queryApplicablePolicyCards({
-        botId,
-        threadId,
-        currentContext,
-        limit: 5,
-      });
-      if (cards.length === 0) {
-        return undefined;
-      }
-      return formatPolicyCardsForPrompt(cards);
-    },
+    (request) => requestContextBuilder.build(request),
   );
 
   const rl = readline.createInterface({ input, output });
@@ -104,6 +133,7 @@ const main = async (): Promise<void> => {
     }
   } finally {
     rl.close();
+    await Promise.all([turnRecordReader.close(), pool.end()]);
   }
 };
 
