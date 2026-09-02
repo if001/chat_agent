@@ -331,7 +331,12 @@ test("injects memory policy context for scheduled agent input", async () => {
     async (record) => { records.push(record); },
     async () => "1. scheduled policy\n- recommendedBehavior: follow up",
     undefined,
-    undefined,
+    async () => ({
+      focus: { currentTopicStatus: "complete" },
+      reason: "the reply can include one topic",
+      conversationTrigger: "eligible",
+      conversationTriggerReason: "the current reply has room",
+    }),
     async () =>
       records.some(
         (record) =>
@@ -427,7 +432,12 @@ test("integrates a conversation topic into one reply and links its next reaction
         sourceInteractionId: "conversation-1",
       };
     },
-    undefined,
+    async () => ({
+      focus: { currentTopicStatus: "complete" },
+      reason: "the normal reply can integrate one topic",
+      conversationTrigger: "eligible",
+      conversationTriggerReason: "the current topic is complete",
+    }),
     async () =>
       records.filter(
         (record) =>
@@ -507,6 +517,8 @@ test.each([
             currentTopicStatus,
           },
           reason: "test analysis",
+          conversationTrigger: "eligible",
+          conversationTriggerReason: "test eligibility",
         };
       },
     );
@@ -531,9 +543,13 @@ test.each([
   },
 );
 
-test.each(["了解", "エラーになりました", "そこは違うので訂正して"])(
-  "does not plan a conversation topic for excluded input: %s",
-  async (content) => {
+test.each([
+  ["承知しました", "semantic acknowledgement"],
+  ["そこではなく前提を直したい", "correction is in progress"],
+  ["結果を確認しているところです", "work is still in progress"],
+] as const)(
+  "does not plan a conversation topic for semantically ineligible input: %s",
+  async (content, triggerReason) => {
     const transport = new TransportStub();
     const runtime = new RuntimeStub();
     const planned: string[] = [];
@@ -553,6 +569,12 @@ test.each(["了解", "エラーになりました", "そこは違うので訂正
           sourceInteractionId: "conversation-1",
         };
       },
+      async () => ({
+        focus: { currentTopicStatus: "complete" },
+        reason: "semantic test",
+        conversationTrigger: "ineligible",
+        conversationTriggerReason: triggerReason,
+      }),
     );
 
     app.start();
@@ -567,6 +589,53 @@ test.each(["了解", "エラーになりました", "そこは違うので訂正
     expect(transport.sent).toHaveLength(1);
   },
 );
+
+test("allows a technical error-handling question when semantic analysis is eligible", async () => {
+  const transport = new TransportStub();
+  const runtime = new RuntimeStub();
+  const planned: string[] = [];
+  const analyzed: string[] = [];
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      planned.push("planned");
+      return {
+        text: "関連する話題を通常回答へ統合する",
+        sourceInteractionId: "technical-error-1",
+      };
+    },
+    async ({ currentContext }) => {
+      analyzed.push(currentContext);
+      return {
+        focus: { currentTopicStatus: "complete" },
+        reason: "technical explanation can conclude in this reply",
+        conversationTrigger: "eligible",
+        conversationTriggerReason:
+          "error is a technical subject, not an incident report",
+      };
+    },
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "エラー処理の設計パターンを教えて",
+    mentionsBot: true,
+  });
+
+  expect(analyzed).toHaveLength(1);
+  expect(planned).toEqual(["planned"]);
+  expect(transport.sent).toHaveLength(1);
+  expect(runtime.requestContexts[0]).toContain("関連する話題");
+});
 
 test("strips leading discord nickname mention before sending input to the agent", async () => {
   const transport = new TransportStub();

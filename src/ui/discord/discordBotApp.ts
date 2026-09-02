@@ -131,7 +131,7 @@ export class DiscordBotApp {
       const conversationTopic = await this.planConversationTopic(
         task,
         pendingInteractionId,
-        conversationAnalysis.focus,
+        conversationAnalysis,
       );
       const requestContext = await this.buildRequestContext(
         task.userId,
@@ -274,17 +274,17 @@ export class DiscordBotApp {
   private async planConversationTopic(
     task: MentionQueueTask,
     pendingInteractionId: string | null,
-    conversationFocus: ConversationFocus | null,
+    conversationAnalysis: ConversationAnalysis,
   ): Promise<ConversationTopicPlan | null> {
     if (
       !this.resolveConversationTopic ||
       pendingInteractionId !== null ||
-      !isConversationTopicEligible(extractUserMessage(task.text))
+      conversationAnalysis.conversationTrigger !== "eligible"
     ) {
       return null;
     }
     try {
-      if (conversationFocus?.currentTopicStatus === "active") {
+      if (conversationAnalysis.focus?.currentTopicStatus === "active") {
         this.logInfo(
           `conversation topic skipped threadId=${task.targetThreadId} reason=active_focus`,
         );
@@ -309,7 +309,12 @@ export class DiscordBotApp {
     task: MentionQueueTask,
   ): Promise<ConversationAnalysis> {
     if (!this.resolveConversationAnalysis) {
-      return { focus: null, reason: "conversation analyzer is not configured" };
+      return {
+        focus: null,
+        reason: "conversation analyzer is not configured",
+        conversationTrigger: "ineligible",
+        conversationTriggerReason: "conversation analyzer is not configured",
+      };
     }
     try {
       return await this.resolveConversationAnalysis({
@@ -323,7 +328,12 @@ export class DiscordBotApp {
       process.stdout.write(
         `[conversation-analysis-error] analysis failed: ${message}\n`,
       );
-      return { focus: null, reason: "conversation analysis failed" };
+      return {
+        focus: null,
+        reason: "conversation analysis failed",
+        conversationTrigger: "ineligible",
+        conversationTriggerReason: "conversation analysis failed",
+      };
     }
   }
 
@@ -398,26 +408,6 @@ const sanitizeDiscordInput = (
 
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const extractUserMessage = (input: string): string =>
-  input.split("\n\nUser message:\n").at(-1)?.trim() ?? input.trim();
-
-export const isConversationTopicEligible = (input: string): boolean => {
-  const text = input.trim();
-  if (text.length === 0) {
-    return false;
-  }
-  if (
-    /^(?:ok(?:ay)?|了解|はい|うん|ありがとう(?:ございます)?|thanks|thx|なるほど)[.!。！]*$/iu.test(
-      text,
-    )
-  ) {
-    return false;
-  }
-  return !/(?:エラー|失敗|違う|訂正|修正中|処理中|待って|error|failed|correction|actually)/iu.test(
-    text,
-  );
-};
 
 const resolveQueueApi = (
   first?: QueueApi | string,

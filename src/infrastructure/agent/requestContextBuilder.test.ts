@@ -101,6 +101,8 @@ test("loads conversation focus from the latest request context", async () => {
             currentTopicStatus: "active",
           },
           reason: "test analysis",
+          conversationTrigger: "ineligible",
+          conversationTriggerReason: "test analysis",
         };
       },
     },
@@ -129,7 +131,12 @@ test("uses precomputed focus without a duplicate analysis call", async () => {
     {
       analyze: async () => {
         calls += 1;
-        return { focus: null, reason: "should not run" };
+        return {
+          focus: null,
+          reason: "should not run",
+          conversationTrigger: "ineligible",
+          conversationTriggerReason: "should not run",
+        };
       },
     },
   );
