@@ -36,6 +36,7 @@ import { createPostgresTurnRecordReader } from "@chat-agent/memory-system";
 import {
   createFileInteractionLogStore,
   createFileTopicStateStore,
+  createPendingInteractionResolver,
   createOllamaDialoguePlanningModel,
   createRecentTurnContextSource,
   createSimplePomdpSystemService,
@@ -239,6 +240,10 @@ const main = async (): Promise<void> => {
   const conversationFocusSource = createConversationFocusSource(
     turnRecordReader,
   );
+  const pendingInteractionResolver = createPendingInteractionResolver({
+    turnRecordReader,
+    interactionLogStore,
+  });
   const requestContextBuilder = new RequestContextBuilder(
     userMemoryStore,
     dailyEventRepository,
@@ -276,6 +281,7 @@ const main = async (): Promise<void> => {
       }),
     ({ botId, threadId }) =>
       conversationFocusSource.load({ botId, threadId }),
+    (input) => pendingInteractionResolver.resolve(input),
   );
   app.start();
 

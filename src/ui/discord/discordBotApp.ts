@@ -25,7 +25,6 @@ export interface DiscordTransport {
 export class DiscordBotApp {
   private readonly queueApi: QueueApi;
   private readonly worker: QueueWorker;
-  private readonly pendingInteractionByThread = new Map<string, string>();
 
   constructor(
     private readonly identity: BotIdentity,
@@ -54,6 +53,11 @@ export class DiscordBotApp {
       botId: string;
       threadId: string;
     }) => Promise<ConversationFocus | null>,
+    private readonly resolvePendingInteraction?: (input: {
+      botId: string;
+      threadId: string;
+      userId: string;
+    }) => Promise<string | null>,
   ) {
     const queueApi = resolveQueueApi(
       queueOrDiscordBotUserId,
@@ -117,7 +121,11 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
-      const conversationTopic = await this.planConversationTopic(task);
+      const pendingInteractionId = await this.findPendingInteraction(task);
+      const conversationTopic = await this.planConversationTopic(
+        task,
+        pendingInteractionId,
+      );
       const requestContext = await this.buildRequestContext(
         task.userId,
         task.targetThreadId,
@@ -148,6 +156,7 @@ export class DiscordBotApp {
           task,
           mentionReply,
           conversationTopic?.sourceInteractionId,
+          pendingInteractionId,
         );
         this.logInfo(`replied id=${task.id} action=mention`);
       } else {
@@ -217,6 +226,7 @@ export class DiscordBotApp {
     task: QueueTask,
     assistantContent: string,
     conversationInteractionId?: string,
+    pendingInteractionId?: string | null,
   ): Promise<void> {
     if (!this.onTurnRecorded) {
       return;
@@ -226,7 +236,7 @@ export class DiscordBotApp {
       task.source === "user"
         ? (conversationInteractionId ??
           task.sourceInteractionId ??
-          this.pendingInteractionByThread.get(task.targetThreadId))
+          pendingInteractionId)
         : task.sourceInteractionId;
     try {
       await this.onTurnRecorded({
@@ -246,21 +256,6 @@ export class DiscordBotApp {
         ],
         createdAtIso: timestamp,
       });
-      if (task.source === "user") {
-        if (conversationInteractionId) {
-          this.pendingInteractionByThread.set(
-            task.targetThreadId,
-            conversationInteractionId,
-          );
-        } else {
-          this.pendingInteractionByThread.delete(task.targetThreadId);
-        }
-      } else if (sourceInteractionId) {
-        this.pendingInteractionByThread.set(
-          task.targetThreadId,
-          sourceInteractionId,
-        );
-      }
     } catch (error: unknown) {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
@@ -270,10 +265,11 @@ export class DiscordBotApp {
 
   private async planConversationTopic(
     task: MentionQueueTask,
+    pendingInteractionId: string | null,
   ): Promise<ConversationTopicPlan | null> {
     if (
       !this.resolveConversationTopic ||
-      this.pendingInteractionByThread.has(task.targetThreadId) ||
+      pendingInteractionId !== null ||
       !isConversationTopicEligible(extractUserMessage(task.text))
     ) {
       return null;
@@ -303,6 +299,28 @@ export class DiscordBotApp {
         `[simple-pomdp-error] conversation trigger failed: ${message}\n`,
       );
       return null;
+    }
+  }
+
+  private async findPendingInteraction(
+    task: MentionQueueTask,
+  ): Promise<string | null> {
+    if (!this.resolvePendingInteraction) {
+      return task.sourceInteractionId ?? null;
+    }
+    try {
+      return await this.resolvePendingInteraction({
+        botId: this.identity.botId,
+        threadId: task.targetThreadId,
+        userId: task.userId,
+      });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(
+        `[simple-pomdp-error] pending interaction restore failed: ${message}\n`,
+      );
+      return task.sourceInteractionId ?? null;
     }
   }
 

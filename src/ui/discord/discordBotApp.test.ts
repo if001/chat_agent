@@ -329,6 +329,22 @@ test("injects memory policy context for scheduled agent input", async () => {
     undefined,
     async (record) => { records.push(record); },
     async () => "1. scheduled policy\n- recommendedBehavior: follow up",
+    undefined,
+    undefined,
+    async () =>
+      records.some(
+        (record) =>
+          record.kind === "human" &&
+          record.sourceInteractionId === "interaction-1",
+      )
+        ? null
+        : records.some(
+              (record) =>
+                record.kind === "proactive" &&
+                record.sourceInteractionId === "interaction-1",
+            )
+          ? "interaction-1"
+          : null,
   );
 
   app.start();
@@ -410,6 +426,15 @@ test("integrates a conversation topic into one reply and links its next reaction
         sourceInteractionId: "conversation-1",
       };
     },
+    undefined,
+    async () =>
+      records.filter(
+        (record) =>
+          record.kind === "human" &&
+          record.sourceInteractionId === "conversation-1",
+      ).length === 1
+        ? "conversation-1"
+        : null,
   );
 
   app.start();
