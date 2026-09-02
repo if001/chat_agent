@@ -30,26 +30,6 @@ export interface CustomToolDeps {
 
 const schemaCompat = <T>(schema: T): T => schema;
 
-export type MemoryDestination = "user_memory" | "daily_event" | "topic_state";
-
-export const classifyMemoryDestination = (note: string): MemoryDestination => {
-  if (
-    /(?:\b\d{4}-\d{1,2}-\d{1,2}\b|\b(?:today|yesterday|tomorrow)\b|今日|昨日|明日|先週|今週)/iu.test(
-      note,
-    )
-  ) {
-    return "daily_event";
-  }
-  if (
-    /(?:(?:proactive|自発的|scheduled|conversation trigger).*(?:interest|興味|反応)|(?:interest|興味|反応).*(?:proactive|自発的|scheduled|conversation trigger))/iu.test(
-      note,
-    )
-  ) {
-    return "topic_state";
-  }
-  return "user_memory";
-};
-
 export const createCustomTools = (deps: CustomToolDeps) => {
   const requireDailyEventRepository = (): DailyEventRepository => {
     if (!deps.dailyEventRepository) {
@@ -170,13 +150,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const rememberUserNoteTool = tool(
     async ({ note }: { note: string }) => {
-      const destination = classifyMemoryDestination(note);
-      if (destination !== "user_memory") {
-        return JSON.stringify({
-          ok: false,
-          error: `This content belongs in ${destination}, not UserMemory.`,
-        });
-      }
       return JSON.stringify(
         await executeUserMemoryWrite(
           deps,
@@ -215,13 +188,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const replaceUserNoteTool = tool(
     async ({ noteId, note }: { noteId: number; note: string }) => {
-      const destination = classifyMemoryDestination(note);
-      if (destination !== "user_memory") {
-        return JSON.stringify({
-          ok: false,
-          error: `This content belongs in ${destination}, not UserMemory.`,
-        });
-      }
       return JSON.stringify(
         await executeUserMemoryWrite(
           deps,
@@ -439,6 +405,9 @@ const executeUserMemoryWrite = async (
   if (!decision) {
     return { ok: false, error: "UserMemory write decision was invalid." };
   }
+  if (decision.destination !== "user_memory") {
+    return rejectedMemoryDestination(decision.destination, decision.reason);
+  }
   if (decision.action === "create") {
     const note = await deps.userMemoryStore.rememberUserNote(
       userId,
@@ -479,6 +448,36 @@ const executeUserMemoryWrite = async (
     action: decision.action,
     reason: decision.reason,
     deletedNoteId: target.id,
+  };
+};
+
+const rejectedMemoryDestination = (
+  destination: "daily_event" | "topic_state" | "reject",
+  reason: string,
+) => {
+  if (destination === "daily_event") {
+    return {
+      ok: false,
+      destination,
+      reason,
+      error:
+        "Use remember_daily_event with an explicit eventDate; content is not stored automatically.",
+    };
+  }
+  if (destination === "topic_state") {
+    return {
+      ok: false,
+      destination,
+      reason,
+      error:
+        "TopicState is updated only by the proactive reaction observation path.",
+    };
+  }
+  return {
+    ok: false,
+    destination,
+    reason,
+    error: "Content is not suitable for automatic memory storage.",
   };
 };
 

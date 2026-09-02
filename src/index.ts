@@ -18,6 +18,7 @@ export {
 export { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
 export {
   createUserMemoryWritePlanner,
+  type MemoryDestination,
   type UserMemoryWriteDecision,
   type UserMemoryWritePlanner,
 } from "./infrastructure/memory/userMemoryWritePlanner";

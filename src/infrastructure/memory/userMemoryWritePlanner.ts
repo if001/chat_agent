@@ -6,11 +6,23 @@ export type UserMemoryWriteAction =
   | "replace"
   | "delete";
 
-export interface UserMemoryWriteDecision {
-  action: UserMemoryWriteAction;
-  targetNoteId?: number;
-  reason: string;
-}
+export type MemoryDestination =
+  | "user_memory"
+  | "daily_event"
+  | "topic_state"
+  | "reject";
+
+export type UserMemoryWriteDecision =
+  | {
+      destination: "user_memory";
+      action: UserMemoryWriteAction;
+      targetNoteId?: number;
+      reason: string;
+    }
+  | {
+      destination: Exclude<MemoryDestination, "user_memory">;
+      reason: string;
+    };
 
 export interface UserMemoryWritePlanner {
   decide(input: {
@@ -25,6 +37,7 @@ interface JsonGeneratingModel {
 }
 
 interface RawUserMemoryWriteDecision {
+  destination?: string;
   action?: string;
   targetNoteId?: number;
   reason?: string;
@@ -36,13 +49,17 @@ export const createUserMemoryWritePlanner = (
   async decide(input) {
     const parsed = await model.generateJson<RawUserMemoryWriteDecision>(
       [
-        "You decide one explicit UserMemory write operation.",
-        "UserMemory stores stable preferences, constraints, attributes, and ongoing working assumptions.",
-        "Choose exactly one action: create, keep_existing, replace, or delete.",
+        "You decide how to handle one explicit memory write request.",
+        "First choose exactly one destination: user_memory, daily_event, topic_state, or reject.",
+        "Use user_memory for stable preferences, constraints, attributes, and ongoing working assumptions. A date mentioned inside a stable constraint does not make it an event. Titles or names containing words such as today are not dates.",
+        "Use daily_event only for a concrete occurrence or activity with a clear calendar date. A concrete event without a clear date must be reject, never user_memory.",
+        "Use topic_state for interest or reaction evidence caused by proactive, scheduled, or conversation-trigger interactions. The main agent must not persist this evidence directly.",
+        "Use reject for ambiguous, transient, insufficiently dated event, or otherwise unsuitable content.",
+        "For user_memory, also choose exactly one action: create, keep_existing, replace, or delete.",
         "Use keep_existing for a semantic duplicate, replace for a contradiction or correction, create for a genuinely new stable fact, and delete only when the proposed correction explicitly removes an existing fact without a replacement.",
         "Never target an unrelated note.",
         "targetNoteId must be one of the supplied candidate IDs. If explicitTargetNoteId is supplied, replace or delete may target only that ID.",
-        "Return JSON with action, optional targetNoteId, and a short natural-language reason.",
+        "Return JSON with destination, optional action, optional targetNoteId, and a short natural-language reason.",
       ].join(" "),
       JSON.stringify({
         proposedNote: input.proposedNote,
@@ -64,9 +81,20 @@ const normalizeDecision = (
   },
 ): UserMemoryWriteDecision | null => {
   const action = value?.action;
+  const destination = value?.destination;
   const reason = value?.reason?.trim();
+  if (!reason) {
+    return null;
+  }
   if (
-    !reason ||
+    destination === "daily_event" ||
+    destination === "topic_state" ||
+    destination === "reject"
+  ) {
+    return { destination, reason };
+  }
+  if (
+    destination !== "user_memory" ||
     (action !== "create" &&
       action !== "keep_existing" &&
       action !== "replace" &&
@@ -76,7 +104,7 @@ const normalizeDecision = (
   }
   if (action === "create") {
     return input.explicitTargetNoteId === undefined
-      ? { action, reason }
+      ? { destination, action, reason }
       : null;
   }
   const targetNoteId = value?.targetNoteId;
@@ -88,5 +116,10 @@ const normalizeDecision = (
   ) {
     return null;
   }
-  return { action, targetNoteId: targetNoteId as number, reason };
+  return {
+    destination,
+    action,
+    targetNoteId: targetNoteId as number,
+    reason,
+  };
 };
