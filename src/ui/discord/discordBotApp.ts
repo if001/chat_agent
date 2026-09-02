@@ -9,7 +9,10 @@ import { handleMention } from "../../core/usecases/handleMention";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
-import { ConversationFocus } from "../../infrastructure/agent/conversationFocus";
+import {
+  ConversationAnalysis,
+  ConversationFocus,
+} from "../../infrastructure/agent/conversationFocus";
 
 export interface ConversationTopicPlan {
   text: string;
@@ -43,16 +46,18 @@ export class DiscordBotApp {
       currentContext: string;
       kind: "human" | "conversation" | "proactive" | "delegation";
       proactiveEvidence?: string;
+      conversationFocus?: ConversationFocus | null;
     }) => Promise<string | undefined>,
     private readonly resolveConversationTopic?: (input: {
       botId: string;
       threadId: string;
       userId: string;
     }) => Promise<ConversationTopicPlan | null>,
-    private readonly resolveConversationFocus?: (input: {
+    private readonly resolveConversationAnalysis?: (input: {
       botId: string;
       threadId: string;
-    }) => Promise<ConversationFocus | null>,
+      currentContext: string;
+    }) => Promise<ConversationAnalysis>,
     private readonly resolvePendingInteraction?: (input: {
       botId: string;
       threadId: string;
@@ -121,10 +126,12 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
+      const conversationAnalysis = await this.analyzeConversation(task);
       const pendingInteractionId = await this.findPendingInteraction(task);
       const conversationTopic = await this.planConversationTopic(
         task,
         pendingInteractionId,
+        conversationAnalysis.focus,
       );
       const requestContext = await this.buildRequestContext(
         task.userId,
@@ -132,6 +139,7 @@ export class DiscordBotApp {
         task.text,
         conversationTopic ? "conversation" : "human",
         conversationTopic?.text,
+        conversationAnalysis.focus,
       );
       const mentionReply = await handleMention(
         this.identity,
@@ -266,6 +274,7 @@ export class DiscordBotApp {
   private async planConversationTopic(
     task: MentionQueueTask,
     pendingInteractionId: string | null,
+    conversationFocus: ConversationFocus | null,
   ): Promise<ConversationTopicPlan | null> {
     if (
       !this.resolveConversationTopic ||
@@ -275,13 +284,7 @@ export class DiscordBotApp {
       return null;
     }
     try {
-      const focus = this.resolveConversationFocus
-        ? await this.resolveConversationFocus({
-            botId: this.identity.botId,
-            threadId: task.targetThreadId,
-          })
-        : null;
-      if (focus?.currentTopicStatus === "active") {
+      if (conversationFocus?.currentTopicStatus === "active") {
         this.logInfo(
           `conversation topic skipped threadId=${task.targetThreadId} reason=active_focus`,
         );
@@ -299,6 +302,28 @@ export class DiscordBotApp {
         `[simple-pomdp-error] conversation trigger failed: ${message}\n`,
       );
       return null;
+    }
+  }
+
+  private async analyzeConversation(
+    task: MentionQueueTask,
+  ): Promise<ConversationAnalysis> {
+    if (!this.resolveConversationAnalysis) {
+      return { focus: null, reason: "conversation analyzer is not configured" };
+    }
+    try {
+      return await this.resolveConversationAnalysis({
+        botId: this.identity.botId,
+        threadId: task.targetThreadId,
+        currentContext: task.text,
+      });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(
+        `[conversation-analysis-error] analysis failed: ${message}\n`,
+      );
+      return { focus: null, reason: "conversation analysis failed" };
     }
   }
 
@@ -330,6 +355,7 @@ export class DiscordBotApp {
     currentContext: string,
     kind: "human" | "conversation" | "proactive" | "delegation",
     proactiveEvidence?: string,
+    conversationFocus?: ConversationFocus | null,
   ): Promise<string | undefined> {
     if (!this.resolveRequestContext) {
       return proactiveEvidence
@@ -344,6 +370,7 @@ export class DiscordBotApp {
         currentContext,
         kind,
         ...(proactiveEvidence ? { proactiveEvidence } : {}),
+        ...(conversationFocus !== undefined ? { conversationFocus } : {}),
       });
     } catch (error: unknown) {
       const message =

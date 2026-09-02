@@ -6,8 +6,7 @@ import {
   UserNote,
 } from "../core/types";
 import {
-  deriveConversationFocus,
-  createConversationFocusSource,
+  createConversationAnalysisService,
 } from "../infrastructure/agent/conversationFocus";
 import { createCustomTools } from "../infrastructure/agent/customTools";
 import { DeepAgentRuntime } from "../infrastructure/agent/deepAgentRuntime";
@@ -162,14 +161,37 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     note: "詳しい回答を好む",
   });
 
-  const focusSource = createConversationFocusSource({
-    listRecentTurnRecords: async ({ botId, threadId, limit }) =>
-      longConversationFixture
-        .filter(
-          (record) => record.botId === botId && record.threadId === threadId,
-        )
-        .slice(-limit),
-  });
+  const createFixtureAnalysis = (includeCompleted: boolean = false) =>
+    createConversationAnalysisService({
+      reader: {
+        listRecentTurnRecords: async ({ botId, threadId, limit }) =>
+          [
+            ...longConversationFixture,
+            ...(includeCompleted ? [completedConversationTurn] : []),
+          ]
+            .filter(
+              (record) =>
+                record.botId === botId && record.threadId === threadId,
+            )
+            .slice(-limit),
+      },
+      model: {
+        generateJson: async <T>(_systemPrompt: string, userPrompt: string) =>
+          (userPrompt.includes("この件は解決しました")
+            ? {
+                currentTopicStatus: "complete",
+                reason: "fixture topic was completed",
+              }
+            : {
+                currentTopic: "CIが失敗する理由は何ですか？",
+                unresolvedQuestion: "CIが失敗する理由は何ですか？",
+                agentCommitment: "ログを確認して後で共有します。",
+                currentTopicStatus: "active",
+                reason: "fixture returned to unresolved CI investigation",
+              }) as T,
+      },
+    });
+  const conversationAnalysisService = createFixtureAnalysis();
   const policyInputs: string[] = [];
   const builder = new RequestContextBuilder(
     userMemoryStore,
@@ -181,7 +203,7 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
       },
     },
     () => new Date("2026-09-01T09:00:00.000Z"),
-    focusSource,
+    conversationAnalysisService,
   );
   const build = (botId: string) =>
     builder.build({
@@ -205,24 +227,32 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
   expect(akaContext).not.toContain("ao-only policy");
   expect(policyInputs.sort()).toEqual(["aka", "ao"]);
 
-  const focus = deriveConversationFocus(
-    longConversationFixture,
-    "元のCIの話に戻って続きを進めよう",
-  );
-  expect(focus).toMatchObject({
+  const focus = await conversationAnalysisService.analyze({
+    botId: "ao",
+    threadId: "shared-thread",
+    currentContext: "元のCIの話に戻って続きを進めよう",
+  });
+  expect(focus.focus).toMatchObject({
     currentTopic: "CIが失敗する理由は何ですか？",
     unresolvedQuestion: "CIが失敗する理由は何ですか？",
     agentCommitment: "ログを確認して後で共有します。",
     currentTopicStatus: "active",
   });
-  const acknowledged = deriveConversationFocus(longConversationFixture, "了解");
-  expect(acknowledged?.currentTopic).not.toBe("了解");
-  expect(acknowledged?.currentTopicStatus).toBe("active");
+  const acknowledged = await conversationAnalysisService.analyze({
+    botId: "ao",
+    threadId: "shared-thread",
+    currentContext: "了解",
+  });
+  expect(acknowledged.focus?.currentTopic).not.toBe("了解");
+  expect(acknowledged.focus?.currentTopicStatus).toBe("active");
   expect(
-    deriveConversationFocus([
-      ...longConversationFixture,
-      completedConversationTurn,
-    ]),
+    (
+      await createFixtureAnalysis(true).analyze({
+        botId: "ao",
+        threadId: "shared-thread",
+        currentContext: "ここで区切ります",
+      })
+    ).focus,
   ).toEqual({ currentTopicStatus: "complete" });
 
   const proactive = longConversationFixture.find(

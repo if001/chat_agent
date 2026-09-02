@@ -93,11 +93,14 @@ test("loads conversation focus from the latest request context", async () => {
     { load: async () => undefined },
     () => new Date("2026-09-01T00:00:00.000Z"),
     {
-      load: async ({ currentContext }) => {
-        focusInputs.push(currentContext ?? "");
+      analyze: async ({ currentContext }) => {
+        focusInputs.push(currentContext);
         return {
-          currentTopic: currentContext,
-          currentTopicStatus: "active",
+          focus: {
+            currentTopic: currentContext,
+            currentTopicStatus: "active",
+          },
+          reason: "test analysis",
         };
       },
     },
@@ -114,4 +117,35 @@ test("loads conversation focus from the latest request context", async () => {
   expect(focusInputs).toEqual(["latest merged input"]);
   expect(context).toContain("## Conversation Focus");
   expect(context).toContain("currentTopic: latest merged input");
+});
+
+test("uses precomputed focus without a duplicate analysis call", async () => {
+  let calls = 0;
+  const builder = new RequestContextBuilder(
+    userMemoryStore,
+    dailyEventRepository,
+    { load: async () => undefined },
+    () => new Date("2026-09-01T00:00:00.000Z"),
+    {
+      analyze: async () => {
+        calls += 1;
+        return { focus: null, reason: "should not run" };
+      },
+    },
+  );
+
+  const context = await builder.build({
+    botId: "ao",
+    userId: "discord-1",
+    threadId: "thread-1",
+    currentContext: "latest input",
+    kind: "human",
+    conversationFocus: {
+      currentTopic: "precomputed topic",
+      currentTopicStatus: "active",
+    },
+  });
+
+  expect(calls).toBe(0);
+  expect(context).toContain("currentTopic: precomputed topic");
 });

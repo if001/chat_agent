@@ -3,6 +3,13 @@ export { DiscordBotApp } from "./ui/discord/discordBotApp";
 export { DiscordIngestApp } from "./ui/discord/discordIngestApp";
 export { DeepAgentRuntime } from "./infrastructure/agent/deepAgentRuntime";
 export { SimpleChatRuntime } from "./infrastructure/agent/simpleChatRuntime";
+export {
+  createConversationAnalysisService,
+  formatConversationFocus,
+  type ConversationAnalysis,
+  type ConversationAnalysisService,
+  type ConversationFocus,
+} from "./infrastructure/agent/conversationFocus";
 export { InMemoryKnowledgeRepository } from "./infrastructure/knowledge/inMemoryKnowledgeRepository";
 export {
   PostgresKnowledgeRepository,

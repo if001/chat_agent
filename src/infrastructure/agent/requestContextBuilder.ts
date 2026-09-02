@@ -3,7 +3,8 @@ import {
   UserMemoryStore,
 } from "../../core/types";
 import {
-  ConversationFocusSource,
+  ConversationAnalysisService,
+  ConversationFocus,
   formatConversationFocus,
 } from "./conversationFocus";
 
@@ -20,6 +21,7 @@ export interface RequestContextInput {
   currentContext: string;
   kind: RequestKind;
   proactiveEvidence?: string;
+  conversationFocus?: ConversationFocus | null;
 }
 
 export interface PolicyContextReader {
@@ -36,11 +38,12 @@ export class RequestContextBuilder {
     private readonly dailyEventRepository: DailyEventRepository,
     private readonly policyContextReader: PolicyContextReader,
     private readonly now: () => Date = () => new Date(),
-    private readonly conversationFocusSource?: ConversationFocusSource,
+    private readonly conversationAnalysisService?: ConversationAnalysisService,
   ) {}
 
   async build(input: RequestContextInput): Promise<string> {
-    const focusSource = this.conversationFocusSource;
+    const analysisService = this.conversationAnalysisService;
+    const hasPrecomputedFocus = "conversationFocus" in input;
     const [notes, events, policy, focus] = await Promise.all([
       loadOrDefault(
         () => this.userMemoryStore.searchUserNotes(input.userId, "", 10),
@@ -64,14 +67,16 @@ export class RequestContextBuilder {
           }),
         undefined,
       ),
-      focusSource
+      hasPrecomputedFocus
+        ? input.conversationFocus ?? null
+        : analysisService
         ? loadOrDefault(
             () =>
-              focusSource.load({
+              analysisService.analyze({
                 botId: input.botId,
                 threadId: input.threadId,
                 currentContext: input.currentContext,
-              }),
+              }).then(({ focus }) => focus),
             null,
           )
         : null,
