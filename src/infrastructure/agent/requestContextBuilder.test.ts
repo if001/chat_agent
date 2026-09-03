@@ -98,7 +98,9 @@ test("loads conversation focus from the latest request context", async () => {
         return {
           focus: {
             currentTopic: currentContext,
+            currentTopicReason: "latest input establishes the topic",
             currentTopicStatus: "active",
+            currentTopicStatusReason: "the topic is still active",
           },
           reason: "test analysis",
           conversationTrigger: "ineligible",
@@ -149,7 +151,9 @@ test("uses precomputed focus without a duplicate analysis call", async () => {
     kind: "human",
     conversationFocus: {
       currentTopic: "precomputed topic",
+      currentTopicReason: "precomputed focus reason",
       currentTopicStatus: "active",
+      currentTopicStatusReason: "precomputed status reason",
     },
   });
 

@@ -179,17 +179,27 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
       model: {
         generateJson: async <T>(_systemPrompt: string, userPrompt: string) =>
           (userPrompt.includes("この件は解決しました")
-            ? {
+              ? {
                 currentTopicStatus: "complete",
+                currentTopicStatusReason:
+                  "the user explicitly says the issue is resolved",
                 reason: "fixture topic was completed",
                 conversationTrigger: "eligible",
                 conversationTriggerReason: "fixture topic is complete",
               }
-            : {
+              : {
                 currentTopic: "CIが失敗する理由は何ですか？",
+                currentTopicReason:
+                  "the user explicitly returns to the CI investigation",
                 unresolvedQuestion: "CIが失敗する理由は何ですか？",
+                unresolvedQuestionReason:
+                  "the cause of the CI failure has not been answered",
                 agentCommitment: "ログを確認して後で共有します。",
+                agentCommitmentReason:
+                  "the assistant said it would inspect and report the logs",
                 currentTopicStatus: "active",
+                currentTopicStatusReason:
+                  "the unresolved question and commitment remain active",
                 reason: "fixture returned to unresolved CI investigation",
                 conversationTrigger: "ineligible",
                 conversationTriggerReason: "fixture topic is active",
@@ -227,6 +237,12 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     aoContext.indexOf("release 1.0を公開した"),
   );
   expect(aoContext).toContain("ao-only policy");
+  expect(aoContext).toContain(
+    "currentTopicReason: the user explicitly returns to the CI investigation",
+  );
+  expect(aoContext).toContain(
+    "agentCommitmentReason: the assistant said it would inspect and report the logs",
+  );
   expect(aoContext).not.toContain("aka-only policy");
   expect(akaContext).toContain("aka-only policy");
   expect(akaContext).not.toContain("ao-only policy");
@@ -239,9 +255,17 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
   });
   expect(focus.focus).toMatchObject({
     currentTopic: "CIが失敗する理由は何ですか？",
+    currentTopicReason:
+      "the user explicitly returns to the CI investigation",
     unresolvedQuestion: "CIが失敗する理由は何ですか？",
+    unresolvedQuestionReason:
+      "the cause of the CI failure has not been answered",
     agentCommitment: "ログを確認して後で共有します。",
+    agentCommitmentReason:
+      "the assistant said it would inspect and report the logs",
     currentTopicStatus: "active",
+    currentTopicStatusReason:
+      "the unresolved question and commitment remain active",
   });
   const acknowledged = await conversationAnalysisService.analyze({
     botId: "ao",
@@ -258,7 +282,11 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
         currentContext: "ここで区切ります",
       })
     ).focus,
-  ).toEqual({ currentTopicStatus: "complete" });
+  ).toEqual({
+    currentTopicStatus: "complete",
+    currentTopicStatusReason:
+      "the user explicitly says the issue is resolved",
+  });
 
   const proactive = longConversationFixture.find(
     (record) => record.kind === "proactive",

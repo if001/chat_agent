@@ -332,7 +332,10 @@ test("injects memory policy context for scheduled agent input", async () => {
     async () => "1. scheduled policy\n- recommendedBehavior: follow up",
     undefined,
     async () => ({
-      focus: { currentTopicStatus: "complete" },
+      focus: {
+        currentTopicStatus: "complete",
+        currentTopicStatusReason: "fixture complete",
+      },
       reason: "the reply can include one topic",
       conversationTrigger: "eligible",
       conversationTriggerReason: "the current reply has room",
@@ -433,7 +436,10 @@ test("integrates a conversation topic into one reply and links its next reaction
       };
     },
     async () => ({
-      focus: { currentTopicStatus: "complete" },
+      focus: {
+        currentTopicStatus: "complete",
+        currentTopicStatusReason: "fixture complete",
+      },
       reason: "the normal reply can integrate one topic",
       conversationTrigger: "eligible",
       conversationTriggerReason: "the current topic is complete",
@@ -514,7 +520,9 @@ test.each([
         return {
           focus: {
             currentTopic: "現在の作業",
+            currentTopicReason: "fixture current topic",
             currentTopicStatus,
+            currentTopicStatusReason: "fixture status",
           },
           reason: "test analysis",
           conversationTrigger: "eligible",
@@ -536,7 +544,9 @@ test.each([
     expect(contextualized).toEqual([
       {
         currentTopic: "現在の作業",
+        currentTopicReason: "fixture current topic",
         currentTopicStatus,
+        currentTopicStatusReason: "fixture status",
       },
     ]);
     expect(transport.sent).toHaveLength(1);
@@ -570,7 +580,10 @@ test.each([
         };
       },
       async () => ({
-        focus: { currentTopicStatus: "complete" },
+        focus: {
+          currentTopicStatus: "complete",
+          currentTopicStatusReason: "fixture complete",
+        },
         reason: "semantic test",
         conversationTrigger: "ineligible",
         conversationTriggerReason: triggerReason,
@@ -614,7 +627,10 @@ test("allows a technical error-handling question when semantic analysis is eligi
     async ({ currentContext }) => {
       analyzed.push(currentContext);
       return {
-        focus: { currentTopicStatus: "complete" },
+        focus: {
+          currentTopicStatus: "complete",
+          currentTopicStatusReason: "fixture complete",
+        },
         reason: "technical explanation can conclude in this reply",
         conversationTrigger: "eligible",
         conversationTriggerReason:
