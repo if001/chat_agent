@@ -268,7 +268,9 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
       record.kind === "human" &&
       record.sourceInteractionId === proactive?.sourceInteractionId,
   );
-  expect(proactive?.sourceInteractionId).toBe("interaction-testing-1");
+  expect(proactive?.sourceInteractionId).toBe(
+    "pomdp_123e4567-e89b-42d3-a456-426614174000",
+  );
   expect(reaction?.sourceInteractionId).toBe(proactive?.sourceInteractionId);
   expect(longConversationFixture.some((record) => record.kind === "delegation")).toBe(
     true,

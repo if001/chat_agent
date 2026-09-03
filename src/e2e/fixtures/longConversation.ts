@@ -37,14 +37,14 @@ export const longConversationFixture: TurnRecord[] = [
     "proactive",
     "background内部指示: テストの話題を出す",
     "property testingの小さな事例を共有します。",
-    "interaction-testing-1",
+    "pomdp_123e4567-e89b-42d3-a456-426614174000",
   ),
   turn(
     "2026-08-30T10:02:00.000Z",
     "human",
     "そのテストの話は興味があります",
     "次は具体例を整理します。",
-    "interaction-testing-1",
+    "pomdp_123e4567-e89b-42d3-a456-426614174000",
   ),
   turn(
     "2026-08-30T10:10:00.000Z",
