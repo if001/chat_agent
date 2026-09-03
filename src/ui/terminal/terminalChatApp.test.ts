@@ -136,7 +136,9 @@ test("builds shared memory, daily event, time, policy, and focus context", async
       analyze: async () => ({
         focus: {
           currentTopic: "terminal integration",
+          currentTopicReason: "the terminal request establishes the topic",
           currentTopicStatus: "active",
+          currentTopicStatusReason: "the terminal topic is active",
         },
         reason: "test focus",
         conversationTrigger: "ineligible",

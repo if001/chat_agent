@@ -2,10 +2,15 @@ import { TurnRecord, TurnRecordReader } from "@chat-agent/memory-system";
 
 export interface ConversationFocus {
   currentTopic?: string;
+  currentTopicReason?: string;
   unresolvedQuestion?: string;
+  unresolvedQuestionReason?: string;
   agentCommitment?: string;
+  agentCommitmentReason?: string;
   resumableTopic?: string;
+  resumableTopicReason?: string;
   currentTopicStatus: "active" | "complete" | "none";
+  currentTopicStatusReason: string;
 }
 
 export interface ConversationAnalysis {
@@ -31,10 +36,15 @@ interface JsonGeneratingModel {
 
 interface RawConversationAnalysis {
   currentTopic?: string;
+  currentTopicReason?: string;
   unresolvedQuestion?: string;
+  unresolvedQuestionReason?: string;
   agentCommitment?: string;
+  agentCommitmentReason?: string;
   resumableTopic?: string;
+  resumableTopicReason?: string;
   currentTopicStatus?: string;
+  currentTopicStatusReason?: string;
   reason?: string;
   conversationTrigger?: string;
   conversationTriggerReason?: string;
@@ -77,7 +87,9 @@ export const createConversationAnalysisService = (options: {
         return {
           focus: {
             currentTopic: truncate(currentInput),
+            currentTopicReason: "the first request establishes this topic",
             currentTopicStatus: "active",
+            currentTopicStatusReason: "the first request is still active",
           },
           reason: "no prior human conversation history",
           conversationTrigger: "ineligible",
@@ -96,7 +108,9 @@ export const createConversationAnalysisService = (options: {
             "Also decide whether exactly one additional proactive topic can be integrated naturally into the normal reply.",
             "conversationTrigger must be eligible or ineligible. Use ineligible for active focus, acknowledgement, correction, error reporting, or work still in progress. Do not reject a technical question merely because it discusses errors or corrections.",
             "currentTopicStatus must be active, complete, or none.",
-            "Return JSON with optional currentTopic, unresolvedQuestion, agentCommitment, resumableTopic, currentTopicStatus, a short focus reason, conversationTrigger, and a short conversationTriggerReason.",
+            "For each focus value, return its short natural-language reason in the corresponding currentTopicReason, unresolvedQuestionReason, agentCommitmentReason, resumableTopicReason, or currentTopicStatusReason field.",
+            "Do not return a focus value without its reason or a reason without its value. currentTopicStatus and currentTopicStatusReason are required.",
+            "Return JSON with the focus fields, a short overall reason, conversationTrigger, and a short conversationTriggerReason.",
           ].join(" "),
           JSON.stringify({
             humanConversationHistory: history,
@@ -119,15 +133,30 @@ export const formatConversationFocus = (
   }
   const lines = [
     `status: ${focus.currentTopicStatus}`,
-    ...(focus.currentTopic ? [`currentTopic: ${focus.currentTopic}`] : []),
+    `statusReason: ${focus.currentTopicStatusReason}`,
+    ...(focus.currentTopic
+      ? [
+          `currentTopic: ${focus.currentTopic}`,
+          `currentTopicReason: ${focus.currentTopicReason}`,
+        ]
+      : []),
     ...(focus.unresolvedQuestion
-      ? [`unresolvedQuestion: ${focus.unresolvedQuestion}`]
+      ? [
+          `unresolvedQuestion: ${focus.unresolvedQuestion}`,
+          `unresolvedQuestionReason: ${focus.unresolvedQuestionReason}`,
+        ]
       : []),
     ...(focus.agentCommitment
-      ? [`agentCommitment: ${focus.agentCommitment}`]
+      ? [
+          `agentCommitment: ${focus.agentCommitment}`,
+          `agentCommitmentReason: ${focus.agentCommitmentReason}`,
+        ]
       : []),
     ...(focus.resumableTopic
-      ? [`resumableTopic: ${focus.resumableTopic}`]
+      ? [
+          `resumableTopic: ${focus.resumableTopic}`,
+          `resumableTopicReason: ${focus.resumableTopicReason}`,
+        ]
       : []),
   ];
   return truncate(lines.join("\n"), CONVERSATION_FOCUS_MAX_CHARS);
@@ -173,11 +202,13 @@ const normalizeAnalysis = (
   value: RawConversationAnalysis | null | undefined,
 ): ConversationAnalysis => {
   const status = value?.currentTopicStatus;
+  const statusReason = value?.currentTopicStatusReason?.trim();
   const reason = value?.reason?.trim();
   const conversationTrigger = value?.conversationTrigger;
   const conversationTriggerReason = value?.conversationTriggerReason?.trim();
   if (
     !reason ||
+    !statusReason ||
     !conversationTriggerReason ||
     (conversationTrigger !== "eligible" &&
       conversationTrigger !== "ineligible") ||
@@ -186,11 +217,32 @@ const normalizeAnalysis = (
     return ineligibleAnalysis("invalid conversation analysis output");
   }
   const focus: ConversationFocus = {
-    ...optionalField("currentTopic", value?.currentTopic),
-    ...optionalField("unresolvedQuestion", value?.unresolvedQuestion),
-    ...optionalField("agentCommitment", value?.agentCommitment),
-    ...optionalField("resumableTopic", value?.resumableTopic),
+    ...optionalFocusField(
+      "currentTopic",
+      "currentTopicReason",
+      value?.currentTopic,
+      value?.currentTopicReason,
+    ),
+    ...optionalFocusField(
+      "unresolvedQuestion",
+      "unresolvedQuestionReason",
+      value?.unresolvedQuestion,
+      value?.unresolvedQuestionReason,
+    ),
+    ...optionalFocusField(
+      "agentCommitment",
+      "agentCommitmentReason",
+      value?.agentCommitment,
+      value?.agentCommitmentReason,
+    ),
+    ...optionalFocusField(
+      "resumableTopic",
+      "resumableTopicReason",
+      value?.resumableTopic,
+      value?.resumableTopicReason,
+    ),
     currentTopicStatus: status,
+    currentTopicStatusReason: truncate(statusReason),
   };
   return {
     focus,
@@ -207,13 +259,23 @@ const ineligibleAnalysis = (reason: string): ConversationAnalysis => ({
   conversationTriggerReason: reason,
 });
 
-const optionalField = <K extends keyof Omit<ConversationFocus, "currentTopicStatus">>(
-  key: K,
+const optionalFocusField = (
+  valueKey: "currentTopic" | "unresolvedQuestion" | "agentCommitment" | "resumableTopic",
+  reasonKey:
+    | "currentTopicReason"
+    | "unresolvedQuestionReason"
+    | "agentCommitmentReason"
+    | "resumableTopicReason",
   value: string | undefined,
-): Partial<Pick<ConversationFocus, K>> => {
-  const normalized = value?.trim();
-  return normalized
-    ? ({ [key]: truncate(normalized) } as Partial<Pick<ConversationFocus, K>>)
+  reason: string | undefined,
+): Partial<ConversationFocus> => {
+  const normalizedValue = value?.trim();
+  const normalizedReason = reason?.trim();
+  return normalizedValue && normalizedReason
+    ? {
+        [valueKey]: truncate(normalizedValue),
+        [reasonKey]: truncate(normalizedReason),
+      }
     : {};
 };
 
