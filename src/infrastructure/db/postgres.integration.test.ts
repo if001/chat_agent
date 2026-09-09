@@ -87,6 +87,17 @@ integrationTest(
       );
       expect(notes[0]?.note).toBe("prefer direct answers");
       expect(notes).toHaveLength(1);
+      const jazzPreference = await userMemoryStore.rememberUserNote(
+        userId,
+        "ジャズをよく聴く",
+      );
+      expect(
+        await userMemoryStore.searchUserNotes(
+          userId,
+          "どんな音楽が好み？",
+          5,
+        ),
+      ).toEqual([]);
       const replaced = await userMemoryStore.replaceUserNote(
         userId,
         notes[0]!.id,
@@ -104,6 +115,9 @@ integrationTest(
       expect(await userMemoryStore.deleteUserNote(userId, replaced!.id)).toBe(
         true,
       );
+      expect(
+        await userMemoryStore.deleteUserNote(userId, jazzPreference.id),
+      ).toBe(true);
     } finally {
       // await db.execute(sql`delete from articles where url = ${articleUrl}`);
       // await db.execute(
