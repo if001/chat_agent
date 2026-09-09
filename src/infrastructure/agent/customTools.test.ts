@@ -311,7 +311,7 @@ test("search_saved_knowledge returns search results", async () => {
   const result = await findTool(tools, "search_saved_knowledge").invoke({ query: "langgraph" });
   const parsed = JSON.parse(result as string) as SearchResultItem[];
   expect(parsed[0]?.articleId).toBe("a1");
-  expect(parsed[0]?.score).toBe(0.9);
+  expect(parsed[0]?.score).toBeUndefined();
 });
 
 test("remember_user_note tool stores note", async () => {
@@ -500,8 +500,17 @@ test("get_saved_article returns lightweight payload by default", async () => {
   const result = await findTool(tools, "get_saved_article").invoke({ articleId: "a1" });
   const parsed = JSON.parse(result as string) as { rawMarkdown?: string; summary?: string; content?: string; tags?: string[] };
   expect(parsed.summary).toBe("s");
-  expect(parsed.content).toBe("c");
+  expect(parsed.content).toBeUndefined();
   expect(parsed.tags).toEqual(["tag1"]);
+  expect(parsed.rawMarkdown).toBeUndefined();
+});
+
+test("get_saved_article returns analyzed content only when requested", async () => {
+  const tools = createCustomTools(createDeps());
+  const target = findTool(tools, "get_saved_article");
+  const result = await target.invoke({ articleId: "a1", detail: "content" });
+  const parsed = JSON.parse(result as string) as { content?: string; rawMarkdown?: string };
+  expect(parsed.content).toBe("c");
   expect(parsed.rawMarkdown).toBeUndefined();
 });
 

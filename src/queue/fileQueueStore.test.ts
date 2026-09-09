@@ -170,3 +170,45 @@ test("serializes concurrent input into one monotonically versioned task", async 
 
   await rm(path, { force: true });
 });
+
+test("deduplicates one proactive interaction across queue instances", async () => {
+  const path = createPath();
+  const now = new Date();
+  const firstQueue = createQueueApi(new FileQueueStore(path));
+  const secondQueue = createQueueApi(new FileQueueStore(path));
+  const input = {
+    botId: "ao",
+    userId: "u1",
+    channelId: "c1",
+    text: "shared proactive input",
+    source: "simple_pomdp" as const,
+    sourceInteractionId: "interaction-1",
+    dueAt: now,
+  };
+
+  const [first, second] = await Promise.all([
+    firstQueue.enqueueConversationInput(input),
+    secondQueue.enqueueConversationInput(input),
+  ]);
+
+  expect(first.id).toBe(second.id);
+  expect((await firstQueue.getStatus(now)).counts.total).toBe(1);
+  await rm(path, { force: true });
+});
+
+test("persists a final failure after three handler releases", async () => {
+  const path = createPath();
+  const queue = createQueueApi(new FileQueueStore(path));
+  const now = new Date();
+  await queue.enqueueScheduledInput({ botId: "ao", userId: "u1", channelId: "c1", text: "fail", dueAt: now });
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const task = await queue.dequeueReady(new Date(now.getTime() + 60_000));
+    expect(task).not.toBeNull();
+    await queue.release(task!.id, now, `failure-${attempt + 1}`);
+  }
+
+  expect(await queue.dequeueReady(new Date(now.getTime() + 60_000))).toBeNull();
+  expect((await queue.getStatus(now)).counts.total).toBe(1);
+  await rm(path, { force: true });
+});

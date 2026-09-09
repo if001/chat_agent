@@ -158,7 +158,7 @@ test("builds shared memory, daily event, time, policy, and focus context", async
   const context = runtime.requests[0]?.requestContext;
   expect(context).toContain("Current time: 2026-09-02T00:00:00.000Z");
   expect(context).toContain("prefers concise answers");
-  expect(context).toContain("2026-09-03: release day");
+  expect(context).not.toContain("2026-09-03: release day");
   expect(context).toContain("use explicit constraints");
   expect(context).toContain("currentTopic: terminal integration");
 });

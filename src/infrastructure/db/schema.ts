@@ -42,7 +42,6 @@ export const userNotesTable = pgTable(
 
 export const dailyEventsTable = pgTable("daily_events", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
-  botId: text("bot_id").notNull(),
   userId: text("user_id").notNull(),
   eventDate: text("event_date").notNull(),
   summary: text("summary").notNull(),

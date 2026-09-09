@@ -72,12 +72,12 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const searchSavedKnowledgeTool = tool(
     async ({ query, limit, minScore }: { query: string; limit?: number; minScore?: number }) => {
-      const results = await deps.knowledgeAccessService.searchSavedKnowledge({
+      const results = await retryTransient(() => deps.knowledgeAccessService.searchSavedKnowledge({
         query,
         ...(limit ? { limit } : {}),
         ...(minScore !== undefined ? { minScore } : {}),
-      });
-      return JSON.stringify(results);
+      }));
+      return JSON.stringify(results.map(({ score: _score, ...item }) => item));
     },
     {
       name: "search_saved_knowledge",
@@ -91,37 +91,39 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const getSavedArticleTool = tool(
-    async ({ articleId, url, includeRaw }: { articleId?: string; url?: string; includeRaw?: boolean }) => {
+    async ({ articleId, url, detail }: { articleId?: string; url?: string; detail?: "summary" | "content" | "raw" }) => {
       if (!articleId && !url) {
         return JSON.stringify({ error: "articleId or url is required" });
       }
-      const article = await deps.knowledgeAccessService.getSavedArticle({
+      const article = await retryTransient(() => deps.knowledgeAccessService.getSavedArticle({
         ...(articleId ? { articleId } : {}),
         ...(url ? { url } : {}),
-      });
+      }));
       if (!article) {
         return JSON.stringify(null);
       }
-      if (includeRaw) {
+      if (detail === "raw") {
         return JSON.stringify(article);
       }
-      return JSON.stringify({
+      const base = {
         id: article.id,
         url: article.url,
         title: article.title,
         summary: article.summary,
-        content: article.content,
         tags: article.tags,
         createdAt: article.createdAt,
-      });
+      };
+      return JSON.stringify(
+        detail === "content" ? { ...base, content: article.content } : base,
+      );
     },
     {
       name: "get_saved_article",
-      description: "Gets saved article by articleId or url. Raw markdown is optional.",
+      description: "Gets a shared saved article. Defaults to summary metadata; request content or raw detail only when necessary.",
       schema: schemaCompat(z.object({
         articleId: z.string().optional(),
         url: z.string().url().optional(),
-        includeRaw: z.boolean().default(false),
+        detail: z.enum(["summary", "content", "raw"]).default("summary"),
       })) as never,
     },
   );
@@ -141,7 +143,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "save_web_knowledge",
-      description: "Fetches web page content and saves it as shared knowledge.",
+      description: "Fetches and saves a page as shared knowledge. Use only when the user explicitly asks to save or remember that URL.",
       schema: schemaCompat(z.object({
         url: z.string().url(),
       })) as never,
@@ -503,4 +505,22 @@ const mergeUserNoteCandidates = (
         24,
       )
     : unique.slice(0, 24);
+};
+
+const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (!isTransientError(error)) {
+      throw error;
+    }
+    return operation();
+  }
+};
+
+const isTransientError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(timeout|timed out|ECONNRESET|ECONNREFUSED|EAI_AGAIN|502|503|504)/i.test(
+    message,
+  );
 };

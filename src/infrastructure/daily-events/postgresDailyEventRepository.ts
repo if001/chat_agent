@@ -17,7 +17,6 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
     const [row] = await this.db
       .insert(dailyEventsTable)
       .values({
-        botId: SHARED_DAILY_EVENT_SCOPE,
         userId: input.userId,
         eventDate: normalizedEventDate,
         summary: input.summary,
@@ -33,7 +32,6 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
 
   async searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]> {
     const conditions = [
-      eq(dailyEventsTable.botId, SHARED_DAILY_EVENT_SCOPE),
       eq(dailyEventsTable.userId, input.userId),
       or(
         ilike(dailyEventsTable.summary, `%${input.query}%`),
@@ -62,7 +60,6 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
       .from(dailyEventsTable)
       .where(
         and(
-          eq(dailyEventsTable.botId, SHARED_DAILY_EVENT_SCOPE),
           eq(dailyEventsTable.userId, input.userId),
           gte(dailyEventsTable.eventDate, fromDate),
           lte(dailyEventsTable.eventDate, toDate),
@@ -74,11 +71,8 @@ export class PostgresDailyEventRepository implements DailyEventRepository {
   }
 }
 
-export const SHARED_DAILY_EVENT_SCOPE = "shared";
-
 const mapRow = (row: typeof dailyEventsTable.$inferSelect): DailyEvent => ({
   id: row.id,
-  botId: row.botId,
   userId: row.userId,
   eventDate: row.eventDate,
   summary: row.summary,

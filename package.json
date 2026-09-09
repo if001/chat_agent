@@ -29,6 +29,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=23"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/jest": "^30.0.0",

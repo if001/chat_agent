@@ -22,37 +22,15 @@ export interface AgentRuntime {
   respond(request: AgentRequest): Promise<AgentResponse>;
 }
 
-export interface SavedArticle {
-  id: string;
-  url: string;
-  title: string;
-  summary: string;
-  content: string;
-  tags: string[];
-  rawMarkdown: string;
-  createdAt: Date;
-}
-
-export interface SearchResultItem {
-  articleId: string;
-  score: number;
-  title: string;
-  summary: string;
-  tags: string[];
-  url: string;
-}
-
-export interface SearchKnowledgeOptions {
-  limit?: number;
-  minScore?: number;
-}
-
-export interface KnowledgeRepository {
-  saveArticle(article: Omit<SavedArticle, "id" | "createdAt">): Promise<SavedArticle>;
-  getSavedArticleById(articleId: string): Promise<SavedArticle | null>;
-  getSavedArticleByUrl(url: string): Promise<SavedArticle | null>;
-  searchSavedKnowledge(query: string, options?: SearchKnowledgeOptions): Promise<SearchResultItem[]>;
-}
+export type {
+  KnowledgeRepository,
+  SavedArticle,
+  SearchKnowledgeOptions,
+  SearchResultItem,
+  WebClient,
+  WebListItem,
+  WebPage,
+} from "@chat-agent/knowledge-access";
 
 export interface UserNote {
   id: number;
@@ -73,7 +51,6 @@ export interface UserMemoryStore {
 
 export interface DailyEvent {
   id: number;
-  botId: string;
   userId: string;
   eventDate: string;
   summary: string;
@@ -109,25 +86,6 @@ export interface DailyEventRepository {
   rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent>;
   searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]>;
   getDailyEventsByDate(input: GetDailyEventsByDateInput): Promise<DailyEvent[]>;
-}
-
-export interface WebListItem {
-  rank: number;
-  title: string;
-  url: string;
-  snippet?: string;
-  publishedDate?: string;
-}
-
-export interface WebPage {
-  url: string;
-  title: string;
-  markdown: string;
-}
-
-export interface WebClient {
-  webList(query: string, k: number): Promise<WebListItem[]>;
-  webPage(url: string): Promise<WebPage>;
 }
 
 export interface ChannelMessage {

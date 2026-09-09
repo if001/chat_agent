@@ -34,11 +34,10 @@ class FixtureUserMemoryStore implements UserMemoryStore {
 
   async searchUserNotes(
     _userId: string,
-    query: string,
+    _query: string,
     limit: number,
   ): Promise<UserNote[]> {
     return this.notes
-      .filter((item) => !query || item.note.includes(query))
       .slice(0, limit);
   }
 
@@ -67,7 +66,6 @@ class FixtureDailyEvents implements DailyEventRepository {
   private readonly events: DailyEvent[] = [
     {
       id: 1,
-      botId: "shared",
       userId: "user-1",
       eventDate: "2026-08-30",
       summary: "release 1.0を公開した",
@@ -76,7 +74,6 @@ class FixtureDailyEvents implements DailyEventRepository {
     },
     {
       id: 2,
-      botId: "shared",
       userId: "user-1",
       eventDate: "2026-09-01",
       summary: "CIの原因調査を再開した",

@@ -131,7 +131,6 @@ const loadMemorySystemService = (
       );
       return null;
     }
-    console.log("options.ollamaApiKey", options.ollamaApiKey);
     return mod.createMemorySystemService({
       postgresUrl: options.postgresUrl,
       ollamaBaseUrl: options.ollamaBaseUrl,

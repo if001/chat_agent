@@ -39,7 +39,7 @@ import {
   createFileTopicStateStore,
   createPendingInteractionResolver,
   createOllamaDialoguePlanningModel,
-  createRecentTurnContextSource,
+  createSavedKnowledgeContextSource,
   createSimplePomdpSystemService,
   createTopicStateInteractionLogContextSource,
   createUserMemoryContextSource,
@@ -216,7 +216,6 @@ const main = async (): Promise<void> => {
     topicStateStore,
     interactionLogStore,
     contextSources: [
-      createRecentTurnContextSource({ reader: turnRecordReader }),
       createUserMemoryContextSource({
         reader: {
           listRecentUserMemory: async ({ userId, limit }) =>
@@ -227,6 +226,10 @@ const main = async (): Promise<void> => {
               }),
             ),
         },
+      }),
+      createSavedKnowledgeContextSource({
+        knowledgeAccessService,
+        limit: 3,
       }),
       createTopicStateInteractionLogContextSource({
         topicStateReader: topicStateStore,
@@ -266,7 +269,7 @@ const main = async (): Promise<void> => {
           botId,
           threadId,
           currentContext,
-          limit: 5,
+          limit: 3,
         });
         return cards.length > 0
           ? formatPolicyCardsForPrompt(cards)
@@ -275,6 +278,20 @@ const main = async (): Promise<void> => {
     },
     undefined,
     conversationAnalysisService,
+    {
+      searchRelevant: async ({ query, limit }) =>
+        (await knowledgeAccessService.searchSavedKnowledge({
+          query,
+          limit,
+          minScore: 0.35,
+        })).map(({ articleId, title, summary, tags, url }) => ({
+          articleId,
+          title,
+          summary,
+          tags,
+          url,
+        })),
+    },
   );
   const app = new DiscordBotApp(
     identity,

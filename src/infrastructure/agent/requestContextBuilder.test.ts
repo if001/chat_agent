@@ -55,10 +55,69 @@ test("builds fresh shared context and bot-specific policy for every request", as
   expect(first).toContain("2026-09-01T00:00:00.000Z");
   expect(second).toContain("2026-09-01T01:00:00.000Z");
   expect(first).toContain("shared note for discord-1");
-  expect(second).toContain("shared event");
+  expect(second).not.toContain("shared event");
   expect(first).toContain("policy for ao");
   expect(second).toContain("policy for aka");
   expect(policyInputs).toEqual(["ao", "aka"]);
+});
+
+test("loads daily events only for temporal requests", async () => {
+  const queries: string[] = [];
+  const builder = new RequestContextBuilder(
+    userMemoryStore,
+    {
+      searchDailyEvents: async ({ query }) => {
+        queries.push(query);
+        return [{ id: 1, userId: "discord-1", eventDate: "2026-09-01", summary: "shared event", tags: [], createdAt: new Date(0) }];
+      },
+    } as DailyEventRepository,
+    { load: async () => undefined },
+  );
+
+  const ordinary = await builder.build({ botId: "ao", userId: "discord-1", threadId: "t", currentContext: "設計について相談したい", kind: "human" });
+  const temporal = await builder.build({ botId: "ao", userId: "discord-1", threadId: "t", currentContext: "昨日は何をした？", kind: "human" });
+
+  expect(ordinary).not.toContain("shared event");
+  expect(temporal).toContain("shared event");
+  expect(queries).toEqual(["昨日は何をした？"]);
+});
+
+test("injects only lightweight shared article candidates for knowledge requests", async () => {
+  const queries: string[] = [];
+  const builder = new RequestContextBuilder(
+    userMemoryStore,
+    dailyEventRepository,
+    { load: async () => undefined },
+    () => new Date("2026-09-01T00:00:00.000Z"),
+    undefined,
+    {
+      searchRelevant: async ({ query }) => {
+        queries.push(query);
+        return [{ articleId: "article-1", title: "共有記事", summary: "要約", tags: ["agent"], url: "https://example.com/article" }];
+      },
+    },
+  );
+
+  const greeting = await builder.build({ botId: "ao", userId: "u", threadId: "t", currentContext: "こんにちは", kind: "human" });
+  const question = await builder.build({ botId: "aka", userId: "u", threadId: "t", currentContext: "以前共有したagentの記事について教えて？", kind: "human" });
+
+  expect(greeting).not.toContain("Relevant Shared Articles");
+  expect(question).toContain("articleId=article-1");
+  expect(question).not.toContain("rawMarkdown");
+  expect(queries).toEqual(["以前共有したagentの記事について教えて？"]);
+});
+
+test("marks relevant shared article retrieval failures without failing the request", async () => {
+  const builder = new RequestContextBuilder(
+    userMemoryStore,
+    dailyEventRepository,
+    { load: async () => undefined },
+    undefined,
+    undefined,
+    { searchRelevant: async () => { throw new Error("temporary backend failure"); } },
+  );
+  const context = await builder.build({ botId: "ao", userId: "u", threadId: "t", currentContext: "共有した記事の内容を教えて？", kind: "human" });
+  expect(context).toContain("Relevant saved articles could not be checked");
 });
 
 test("includes proactive evidence only for proactive requests", async () => {

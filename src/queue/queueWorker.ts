@@ -60,7 +60,7 @@ export class QueueWorker {
           process.stdout.write(
             `[queue-handler-error] taskId=${task.id} action=${task.action} ${message}\n`,
           );
-          await this.queue.release(task.id);
+          await this.queue.release(task.id, undefined, message);
           currentNow = new Date();
           continue;
         }
