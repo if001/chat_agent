@@ -32,23 +32,6 @@ export type {
   WebPage,
 } from "@chat-agent/knowledge-access";
 
-export interface UserNote {
-  id: number;
-  note: string;
-  createdAt: Date;
-}
-
-export interface UserMemoryStore {
-  rememberUserNote(userId: string, note: string): Promise<UserNote>;
-  searchUserNotes(userId: string, query: string, limit: number): Promise<UserNote[]>;
-  replaceUserNote(
-    userId: string,
-    noteId: number,
-    note: string,
-  ): Promise<UserNote | null>;
-  deleteUserNote(userId: string, noteId: number): Promise<boolean>;
-}
-
 export interface DailyEvent {
   id: number;
   userId: string;

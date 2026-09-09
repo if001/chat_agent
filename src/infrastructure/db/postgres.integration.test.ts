@@ -4,7 +4,6 @@ import {
   EmbeddingProvider,
   PostgresKnowledgeRepository,
 } from "./postgresKnowledgeRepository";
-import { PostgresUserMemoryStore } from "../memory/postgresUserMemoryStore";
 
 class IntegrationEmbeddingStub implements EmbeddingProvider {
   async embed(text: string): Promise<number[]> {
@@ -38,11 +37,9 @@ integrationTest(
       db,
       new IntegrationEmbeddingStub(),
     );
-    const userMemoryStore = new PostgresUserMemoryStore(db);
 
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const articleUrl = `https://example.com/integration/${suffix}`;
-    const userId = `user_${suffix}`;
 
     try {
       const saved = await repository.saveArticle({
@@ -72,57 +69,8 @@ integrationTest(
         true,
       );
 
-      await userMemoryStore.rememberUserNote(
-        userId,
-        "prefer direct answers",
-      );
-      await userMemoryStore.rememberUserNote(
-        userId,
-        " Prefer direct answers。 ",
-      );
-      const notes = await userMemoryStore.searchUserNotes(
-        userId,
-        "direct answers",
-        5,
-      );
-      expect(notes[0]?.note).toBe("prefer direct answers");
-      expect(notes).toHaveLength(1);
-      const jazzPreference = await userMemoryStore.rememberUserNote(
-        userId,
-        "ジャズをよく聴く",
-      );
-      expect(
-        await userMemoryStore.searchUserNotes(
-          userId,
-          "どんな音楽が好み？",
-          5,
-        ),
-      ).toEqual([]);
-      const replaced = await userMemoryStore.replaceUserNote(
-        userId,
-        notes[0]!.id,
-        "prefer detailed answers",
-      );
-      expect(replaced?.note).toBe("prefer detailed answers");
-      expect(
-        await userMemoryStore.searchUserNotes(userId, "direct answers", 5),
-      ).toEqual([]);
-      const otherUserId = `${userId}-other`;
-      await userMemoryStore.rememberUserNote(otherUserId, "separate user note");
-      expect(
-        await userMemoryStore.searchUserNotes(userId, "separate user", 5),
-      ).toEqual([]);
-      expect(await userMemoryStore.deleteUserNote(userId, replaced!.id)).toBe(
-        true,
-      );
-      expect(
-        await userMemoryStore.deleteUserNote(userId, jazzPreference.id),
-      ).toBe(true);
     } finally {
       // await db.execute(sql`delete from articles where url = ${articleUrl}`);
-      // await db.execute(
-      //   sql`delete from user_notes where user_id = ${userId}`,
-      // );
       await pool.end();
     }
   },

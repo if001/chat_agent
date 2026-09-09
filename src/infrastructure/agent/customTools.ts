@@ -3,10 +3,9 @@ import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import { z } from "zod/v3";
 import {
   DailyEventRepository,
-  UserMemoryStore,
 } from "../../core/types";
 import { TrustedAgentContext } from "./runtimeContext";
-import { UserMemoryWritePlanner } from "../memory/userMemoryWritePlanner";
+import { MemorySystemClient } from "../memory/memorySystemClient";
 
 interface TrustedContextReader {
   current(): TrustedAgentContext;
@@ -14,8 +13,13 @@ interface TrustedContextReader {
 
 export interface CustomToolDeps {
   knowledgeAccessService: KnowledgeAccessService;
-  userMemoryStore: UserMemoryStore;
-  userMemoryWritePlanner: UserMemoryWritePlanner;
+  userMemoryClient: Pick<
+    MemorySystemClient,
+    | "rememberUserNote"
+    | "searchUserNotes"
+    | "replaceUserNote"
+    | "deleteUserNote"
+  >;
   dailyEventRepository?: DailyEventRepository;
   botId: string;
   runtimeContext: TrustedContextReader;
@@ -77,7 +81,12 @@ export const createCustomTools = (deps: CustomToolDeps) => {
         ...(limit ? { limit } : {}),
         ...(minScore !== undefined ? { minScore } : {}),
       }));
-      return JSON.stringify(results.map(({ score: _score, ...item }) => item));
+      return JSON.stringify(
+        results.map(({ score, ...item }) => {
+          void score;
+          return item;
+        }),
+      );
     },
     {
       name: "search_saved_knowledge",
@@ -153,8 +162,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   const rememberUserNoteTool = tool(
     async ({ note }: { note: string }) => {
       return JSON.stringify(
-        await executeUserMemoryWrite(
-          deps,
+        await deps.userMemoryClient.rememberUserNote(
           deps.runtimeContext.current().userId,
           note,
         ),
@@ -171,7 +179,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const searchUserNotesTool = tool(
     async ({ query, limit }: { query: string; limit?: number }) => {
-      const results = await deps.userMemoryStore.searchUserNotes(
+      const results = await deps.userMemoryClient.searchUserNotes(
         deps.runtimeContext.current().userId,
         query,
         limit ?? 5,
@@ -191,11 +199,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   const replaceUserNoteTool = tool(
     async ({ noteId, note }: { noteId: number; note: string }) => {
       return JSON.stringify(
-        await executeUserMemoryWrite(
-          deps,
+        await deps.userMemoryClient.replaceUserNote(
           deps.runtimeContext.current().userId,
-          note,
           noteId,
+          note,
         ),
       );
     },
@@ -211,7 +218,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const deleteUserNoteTool = tool(
     async ({ noteId }: { noteId: number }) => {
-      const deleted = await deps.userMemoryStore.deleteUserNote(
+      const deleted = await deps.userMemoryClient.deleteUserNote(
         deps.runtimeContext.current().userId,
         noteId,
       );
@@ -373,138 +380,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     enqueueTaskTool,
     getQueueStatusTool,
   ];
-};
-
-const executeUserMemoryWrite = async (
-  deps: Pick<
-    CustomToolDeps,
-    "userMemoryStore" | "userMemoryWritePlanner"
-  >,
-  userId: string,
-  proposedNote: string,
-  explicitTargetNoteId?: number,
-) => {
-  const [partialMatches, recentNotes] = await Promise.all([
-    deps.userMemoryStore.searchUserNotes(userId, proposedNote.trim(), 12),
-    deps.userMemoryStore.searchUserNotes(userId, "", 24),
-  ]);
-  const candidates = mergeUserNoteCandidates(
-    partialMatches,
-    recentNotes,
-    explicitTargetNoteId,
-  );
-  if (
-    explicitTargetNoteId !== undefined &&
-    !candidates.some((candidate) => candidate.id === explicitTargetNoteId)
-  ) {
-    return { ok: false, error: "The requested UserMemory note ID was not found." };
-  }
-  const decision = await deps.userMemoryWritePlanner.decide({
-    proposedNote,
-    candidates,
-    ...(explicitTargetNoteId !== undefined ? { explicitTargetNoteId } : {}),
-  });
-  if (!decision) {
-    return { ok: false, error: "UserMemory write decision was invalid." };
-  }
-  if (decision.destination !== "user_memory") {
-    return rejectedMemoryDestination(decision.destination, decision.reason);
-  }
-  if (decision.action === "create") {
-    const note = await deps.userMemoryStore.rememberUserNote(
-      userId,
-      proposedNote,
-    );
-    return { ok: true, action: decision.action, reason: decision.reason, note };
-  }
-  const target = candidates.find(
-    (candidate) => candidate.id === decision.targetNoteId,
-  );
-  if (!target) {
-    return { ok: false, error: "UserMemory write target was not found." };
-  }
-  if (decision.action === "keep_existing") {
-    return {
-      ok: true,
-      action: decision.action,
-      reason: decision.reason,
-      note: target,
-    };
-  }
-  if (decision.action === "replace") {
-    const note = await deps.userMemoryStore.replaceUserNote(
-      userId,
-      target.id,
-      proposedNote,
-    );
-    return {
-      ok: note !== null,
-      action: decision.action,
-      reason: decision.reason,
-      note,
-    };
-  }
-  const deleted = await deps.userMemoryStore.deleteUserNote(userId, target.id);
-  return {
-    ok: deleted,
-    action: decision.action,
-    reason: decision.reason,
-    deletedNoteId: target.id,
-  };
-};
-
-const rejectedMemoryDestination = (
-  destination: "daily_event" | "topic_state" | "reject",
-  reason: string,
-) => {
-  if (destination === "daily_event") {
-    return {
-      ok: false,
-      destination,
-      reason,
-      error:
-        "Use remember_daily_event with an explicit eventDate; content is not stored automatically.",
-    };
-  }
-  if (destination === "topic_state") {
-    return {
-      ok: false,
-      destination,
-      reason,
-      error:
-        "TopicState is updated only by the proactive reaction observation path.",
-    };
-  }
-  return {
-    ok: false,
-    destination,
-    reason,
-    error: "Content is not suitable for automatic memory storage.",
-  };
-};
-
-const mergeUserNoteCandidates = (
-  partialMatches: Awaited<ReturnType<UserMemoryStore["searchUserNotes"]>>,
-  recentNotes: Awaited<ReturnType<UserMemoryStore["searchUserNotes"]>>,
-  explicitTargetNoteId?: number,
-) => {
-  const ordered = [...partialMatches, ...recentNotes];
-  const unique = ordered.filter(
-    (candidate, index) =>
-      ordered.findIndex((item) => item.id === candidate.id) === index,
-  );
-  if (explicitTargetNoteId === undefined) {
-    return unique.slice(0, 24);
-  }
-  const explicit = unique.find(
-    (candidate) => candidate.id === explicitTargetNoteId,
-  );
-  return explicit
-    ? [explicit, ...unique.filter((candidate) => candidate.id !== explicit.id)].slice(
-        0,
-        24,
-      )
-    : unique.slice(0, 24);
 };
 
 const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {

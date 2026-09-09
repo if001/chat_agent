@@ -1,7 +1,7 @@
 import {
   DailyEventRepository,
-  UserMemoryStore,
 } from "../../core/types";
+import { MemorySystemClient } from "../memory/memorySystemClient";
 import {
   ConversationAnalysisService,
   ConversationFocus,
@@ -49,7 +49,7 @@ export interface KnowledgeContextReader {
 
 export class RequestContextBuilder {
   constructor(
-    private readonly userMemoryStore: UserMemoryStore,
+    private readonly userMemoryClient: Pick<MemorySystemClient, "searchUserNotes">,
     private readonly dailyEventRepository: DailyEventRepository,
     private readonly policyContextReader: PolicyContextReader,
     private readonly now: () => Date = () => new Date(),
@@ -65,7 +65,7 @@ export class RequestContextBuilder {
     const [notes, events, policy, focus, knowledge] = await Promise.all([
       loadOrDefault(
         () =>
-          this.userMemoryStore.searchUserNotes(
+          this.userMemoryClient.searchUserNotes(
             input.userId,
             compactQuery(input.currentContext),
             5,

@@ -2,7 +2,6 @@ import { createCustomTools } from "./customTools";
 import {
   DailyEvent,
   DailyEventRepository,
-  UserMemoryStore,
 } from "../../core/types";
 import {
   KnowledgeAccessService,
@@ -16,10 +15,6 @@ import {
   createKnowledgeAccessService,
 } from "@chat-agent/knowledge-access";
 import { AgentRuntimeContext } from "./runtimeContext";
-import {
-  UserMemoryWriteDecision,
-  UserMemoryWritePlanner,
-} from "../memory/userMemoryWritePlanner";
 
 class KnowledgeAccessServiceStub implements KnowledgeAccessService {
   public savedWebKnowledgeInput: { botId: string; threadId?: string; url: string } | null = null;
@@ -91,7 +86,7 @@ class KnowledgeAccessServiceStub implements KnowledgeAccessService {
   }
 }
 
-class MemoryStoreStub implements UserMemoryStore {
+class MemoryStoreStub {
   public notes: Array<{ id: number; note: string; createdAt: Date }> = [];
   public readonly userIds: string[] = [];
   public readonly replacedIds: number[] = [];
@@ -101,7 +96,7 @@ class MemoryStoreStub implements UserMemoryStore {
     this.userIds.push(userId);
     const saved = { id: this.notes.length + 1, note, createdAt: new Date("2026-01-01T00:00:00.000Z") };
     this.notes.push(saved);
-    return saved;
+    return { ok: true, action: "create" as const, note: saved };
   }
 
   async searchUserNotes() {
@@ -111,8 +106,19 @@ class MemoryStoreStub implements UserMemoryStore {
   }
 
   async replaceUserNote(_userId: string, noteId: number, note: string) {
+    if (noteId !== 1 && !this.notes.some((item) => item.id === noteId)) {
+      return { ok: false, error: "not found" };
+    }
     this.replacedIds.push(noteId);
-    return { id: noteId, note, createdAt: new Date("2026-01-01T00:00:00.000Z") };
+    return {
+      ok: true,
+      action: "replace" as const,
+      note: {
+        id: noteId,
+        note,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    };
   }
 
   async deleteUserNote(_userId?: string, noteId?: number) {
@@ -120,44 +126,6 @@ class MemoryStoreStub implements UserMemoryStore {
       this.deletedIds.push(noteId);
     }
     return true;
-  }
-}
-
-class MemoryWritePlannerStub implements UserMemoryWritePlanner {
-  public readonly calls: Array<{
-    proposedNote: string;
-    candidateIds: number[];
-    explicitTargetNoteId?: number;
-  }> = [];
-
-  constructor(
-    private readonly decideWith?: (
-      input: Parameters<UserMemoryWritePlanner["decide"]>[0],
-    ) => UserMemoryWriteDecision | null,
-  ) {}
-
-  async decide(input: Parameters<UserMemoryWritePlanner["decide"]>[0]) {
-    this.calls.push({
-      proposedNote: input.proposedNote,
-      candidateIds: input.candidates.map(({ id }) => id),
-      ...(input.explicitTargetNoteId !== undefined
-        ? { explicitTargetNoteId: input.explicitTargetNoteId }
-        : {}),
-    });
-    return this.decideWith
-      ? this.decideWith(input)
-      : input.explicitTargetNoteId !== undefined
-        ? {
-            destination: "user_memory" as const,
-            action: "replace" as const,
-            targetNoteId: input.explicitTargetNoteId,
-            reason: "explicit correction",
-          }
-        : {
-            destination: "user_memory" as const,
-            action: "create" as const,
-            reason: "new note",
-          };
   }
 }
 
@@ -214,16 +182,19 @@ class DailyEventRepoStub implements DailyEventRepository {
   }
 }
 
-const createDeps = () => ({
-  knowledgeAccessService: new KnowledgeAccessServiceStub(),
-  userMemoryStore: new MemoryStoreStub(),
-  userMemoryWritePlanner: new MemoryWritePlannerStub(),
-  dailyEventRepository: new DailyEventRepoStub(),
-  botId: "b1",
-  runtimeContext: {
-    current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),
-  },
-});
+const createDeps = () => {
+  const userMemoryClient = new MemoryStoreStub();
+  return {
+    knowledgeAccessService: new KnowledgeAccessServiceStub(),
+    userMemoryClient,
+    userMemoryStore: userMemoryClient,
+    dailyEventRepository: new DailyEventRepoStub(),
+    botId: "b1",
+    runtimeContext: {
+      current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),
+    },
+  };
+};
 
 const findTool = (tools: Array<{ name: string; invoke(input: unknown): Promise<unknown> }>, name: string) => {
   const target = tools.find((tool) => tool.name === name);
@@ -323,123 +294,6 @@ test("remember_user_note tool stores note", async () => {
   expect(memoryStore.notes[0]?.note).toBe("prefer concise");
 });
 
-test("semantic duplicate keeps the existing UserMemory note with one planner call", async () => {
-  const deps = createDeps();
-  const memoryStore = deps.userMemoryStore as MemoryStoreStub;
-  memoryStore.notes.push({
-    id: 1,
-    note: "回答は簡潔な方がよい",
-    createdAt: new Date("2026-01-01T00:00:00.000Z"),
-  });
-  const planner = new MemoryWritePlannerStub(() => ({
-    destination: "user_memory",
-    action: "keep_existing",
-    targetNoteId: 1,
-    reason: "same preference in different words",
-  }));
-  const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
-
-  const result = JSON.parse(
-    (await findTool(tools, "remember_user_note").invoke({
-      note: "短い回答が好き",
-    })) as string,
-  ) as { action: string; note: { id: number } };
-
-  expect(result).toMatchObject({ action: "keep_existing", note: { id: 1 } });
-  expect(memoryStore.notes).toHaveLength(1);
-  expect(planner.calls).toHaveLength(1);
-});
-
-test("semantic contradiction replaces only the selected UserMemory note", async () => {
-  const deps = createDeps();
-  const memoryStore = deps.userMemoryStore as MemoryStoreStub;
-  memoryStore.notes.push(
-    {
-      id: 1,
-      note: "回答は簡潔な方がよい",
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
-    },
-    {
-      id: 2,
-      note: "TypeScriptを使っている",
-      createdAt: new Date("2026-01-02T00:00:00.000Z"),
-    },
-  );
-  const planner = new MemoryWritePlannerStub(() => ({
-    destination: "user_memory",
-    action: "replace",
-    targetNoteId: 1,
-    reason: "the preference was corrected",
-  }));
-  const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
-
-  await findTool(tools, "remember_user_note").invoke({
-    note: "回答は詳しい方がよい",
-  });
-
-  expect(memoryStore.replacedIds).toEqual([1]);
-  expect(memoryStore.deletedIds).toEqual([]);
-  expect(planner.calls).toHaveLength(1);
-});
-
-test("new UserMemory note does not mutate unrelated candidates", async () => {
-  const deps = createDeps();
-  const memoryStore = deps.userMemoryStore as MemoryStoreStub;
-  memoryStore.notes.push({
-    id: 1,
-    note: "TypeScriptを使っている",
-    createdAt: new Date("2026-01-01T00:00:00.000Z"),
-  });
-  const planner = new MemoryWritePlannerStub(() => ({
-    destination: "user_memory",
-    action: "create",
-    reason: "new stable preference",
-  }));
-  const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
-
-  await findTool(tools, "remember_user_note").invoke({
-    note: "ダークモードが好き",
-  });
-
-  expect(memoryStore.replacedIds).toEqual([]);
-  expect(memoryStore.deletedIds).toEqual([]);
-  expect(memoryStore.notes.map(({ note }) => note)).toContain("ダークモードが好き");
-  expect(planner.calls).toHaveLength(1);
-});
-
-test("rejects a planner target outside the candidate set", async () => {
-  const deps = createDeps();
-  const memoryStore = deps.userMemoryStore as MemoryStoreStub;
-  const planner = new MemoryWritePlannerStub(() => ({
-    destination: "user_memory",
-    action: "replace",
-    targetNoteId: 999,
-    reason: "invalid target",
-  }));
-  const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
-
-  const result = JSON.parse(
-    (await findTool(tools, "remember_user_note").invoke({
-      note: "詳細な回答が好き",
-    })) as string,
-  ) as { ok: boolean };
-
-  expect(result.ok).toBe(false);
-  expect(memoryStore.replacedIds).toEqual([]);
-  expect(memoryStore.deletedIds).toEqual([]);
-  expect(planner.calls).toHaveLength(1);
-});
-
-test("explicit UserMemory deletion bypasses the write planner", async () => {
-  const deps = createDeps();
-  const planner = deps.userMemoryWritePlanner as MemoryWritePlannerStub;
-  const tools = createCustomTools(deps);
-
-  await findTool(tools, "delete_user_note").invoke({ noteId: 1 });
-
-  expect(planner.calls).toHaveLength(0);
-});
-
 test("memory tools use trusted runtime user ID and do not expose userId in schema", async () => {
   const deps = createDeps();
   const memoryStore = deps.userMemoryStore as MemoryStoreStub;
@@ -533,7 +387,6 @@ test("search_user_notes returns IDs for explicit updates", async () => {
 
 test("replace and delete user note tools operate on an explicit searched ID", async () => {
   const deps = createDeps();
-  const planner = deps.userMemoryWritePlanner as MemoryWritePlannerStub;
   const tools = createCustomTools(deps);
 
   const replaced = JSON.parse(
@@ -551,12 +404,10 @@ test("replace and delete user note tools operate on an explicit searched ID", as
     note: { id: 1, note: "prefer detailed answers" },
   });
   expect(deleted.ok).toBe(true);
-  expect(planner.calls).toHaveLength(1);
 });
 
-test("explicit replacement rejects a nonexistent ID without an LLM call", async () => {
+test("explicit replacement returns the memory-system not-found result", async () => {
   const deps = createDeps();
-  const planner = deps.userMemoryWritePlanner as MemoryWritePlannerStub;
   const tools = createCustomTools(deps);
 
   const result = JSON.parse(
@@ -567,66 +418,6 @@ test("explicit replacement rejects a nonexistent ID without an LLM call", async 
   ) as { ok: boolean };
 
   expect(result.ok).toBe(false);
-  expect(planner.calls).toHaveLength(0);
-});
-
-test.each([
-  ["今日という曲が好き", "user_memory", true],
-  ["2026-10-01以降も回答は簡潔にしてほしい", "user_memory", true],
-  ["queueのテストを追加した", "reject", false],
-  ["scheduled proactive話題への興味はpositive", "topic_state", false],
-  ["覚えておいて", "reject", false],
-  ["2026-05-06 にqueueのテストを追加した", "daily_event", false],
-] as const)(
-  "uses one semantic write decision for %s",
-  async (note, destination, shouldStore) => {
-    const deps = createDeps();
-    const memoryStore = deps.userMemoryStore as MemoryStoreStub;
-    const planner = new MemoryWritePlannerStub(() =>
-      destination === "user_memory"
-        ? {
-            destination,
-            action: "create",
-            reason: "stable UserMemory",
-          }
-        : { destination, reason: "not UserMemory" },
-    );
-    const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
-
-    const result = JSON.parse(
-      (await findTool(tools, "remember_user_note").invoke({ note })) as string,
-    ) as { ok: boolean; destination?: string; error?: string };
-
-    expect(result.ok).toBe(shouldStore);
-    expect(memoryStore.notes.map((item) => item.note).includes(note)).toBe(
-      shouldStore,
-    );
-    if (!shouldStore) {
-      expect(result.destination).toBe(destination);
-    }
-    expect(planner.calls).toHaveLength(1);
-  },
-);
-
-test("daily event decision points to its explicit-date tool without transferring data", async () => {
-  const deps = createDeps();
-  const dailyEvents = deps.dailyEventRepository as DailyEventRepoStub;
-  const planner = new MemoryWritePlannerStub(() => ({
-    destination: "daily_event",
-    reason: "dated concrete occurrence",
-  }));
-  const tools = createCustomTools({ ...deps, userMemoryWritePlanner: planner });
-
-  const result = JSON.parse(
-    (await findTool(tools, "remember_user_note").invoke({
-      note: "2026-05-06 にqueueのテストを追加した",
-    })) as string,
-  ) as { ok: boolean; error: string };
-
-  expect(result.ok).toBe(false);
-  expect(result.error).toContain("remember_daily_event");
-  expect(dailyEvents.remembered).toBeNull();
-  expect(planner.calls).toHaveLength(1);
 });
 
 test("remember_daily_event stores concise daily record", async () => {

@@ -8,7 +8,6 @@ import {
   AgentRuntime,
   BotIdentity,
   DailyEventRepository,
-  UserMemoryStore,
 } from "../../core/types";
 import { RequestContextBuilder } from "../../infrastructure/agent/requestContextBuilder";
 import { DeepAgentRuntime } from "../../infrastructure/agent/deepAgentRuntime";
@@ -265,7 +264,7 @@ test("uses bot-scoped checkpoint threads and caches only static prompts", async 
   ]);
 });
 
-const userMemoryStore: UserMemoryStore = {
+const userMemoryStore = {
   rememberUserNote: async () => {
     throw new Error("not used");
   },
@@ -276,7 +275,7 @@ const userMemoryStore: UserMemoryStore = {
   deleteUserNote: async () => false,
 };
 
-const emptyUserMemoryStore: UserMemoryStore = {
+const emptyUserMemoryStore = {
   ...userMemoryStore,
   searchUserNotes: async () => [],
 };

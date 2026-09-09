@@ -1,4 +1,22 @@
+import type {
+  MemorySystemService as PackageMemorySystemService,
+  UserMemoryWriteResult as PackageUserMemoryWriteResult,
+  UserNote as PackageUserNote,
+} from "@chat-agent/memory-system";
+
 type ChatRole = "system" | "user" | "assistant";
+
+export type MemoryUserNote = PackageUserNote;
+export type UserMemoryWriteResult = PackageUserMemoryWriteResult;
+type MemorySystemService = Pick<
+  PackageMemorySystemService,
+  | "ingestTurnRecord"
+  | "queryApplicablePolicyCards"
+  | "rememberUserNote"
+  | "searchUserNotes"
+  | "replaceUserNote"
+  | "deleteUserNote"
+>;
 
 interface TurnMessage {
   role: ChatRole;
@@ -13,24 +31,6 @@ export interface TurnRecordInput {
   sourceInteractionId?: string;
   messages: TurnMessage[];
   createdAtIso: string;
-}
-
-interface MemorySystemService {
-  ingestTurnRecord(input: TurnRecordInput): Promise<void>;
-  queryApplicablePolicyCards(input: {
-    botId: string;
-    threadId: string;
-    currentContext: string;
-    limit?: number;
-  }): Promise<
-    Array<{
-      id: string;
-      appliesWhen: string;
-      recommendedBehavior: string;
-      avoidBehavior?: string;
-      episodeIds: string[];
-    }>
-  >;
 }
 
 export interface MemoryPolicyCard {
@@ -49,6 +49,18 @@ export interface MemorySystemClient {
     currentContext: string;
     limit?: number;
   }): Promise<MemoryPolicyCard[]>;
+  rememberUserNote(userId: string, note: string): Promise<UserMemoryWriteResult>;
+  searchUserNotes(
+    userId: string,
+    query: string,
+    limit: number,
+  ): Promise<MemoryUserNote[]>;
+  replaceUserNote(
+    userId: string,
+    noteId: number,
+    note: string,
+  ): Promise<UserMemoryWriteResult>;
+  deleteUserNote(userId: string, noteId: number): Promise<boolean>;
 }
 
 export interface MemorySystemClientOptions {
@@ -78,8 +90,11 @@ export const formatPolicyCardsForPrompt = (
 
 export const createMemorySystemClient = (
   options: MemorySystemClientOptions,
+  loadService: (
+    options: MemorySystemClientOptions,
+  ) => MemorySystemService | null = loadMemorySystemService,
 ): MemorySystemClient => {
-  const service = loadMemorySystemService(options);
+  const service = loadService(options);
   return {
     ingestTurnRecord: async (input) => {
       if (!service) {
@@ -108,6 +123,22 @@ export const createMemorySystemClient = (
         return [];
       }
       return service.queryApplicablePolicyCards(input);
+    },
+    rememberUserNote: async (userId, note) => {
+      if (!service) return { ok: false, error: "memory-system is unavailable" };
+      return service.rememberUserNote({ userId, note });
+    },
+    searchUserNotes: async (userId, query, limit) => {
+      if (!service) return [];
+      return service.searchUserNotes({ userId, query, limit });
+    },
+    replaceUserNote: async (userId, noteId, note) => {
+      if (!service) return { ok: false, error: "memory-system is unavailable" };
+      return service.replaceUserNote({ userId, noteId, note });
+    },
+    deleteUserNote: async (userId, noteId) => {
+      if (!service) return false;
+      return service.deleteUserNote({ userId, noteId });
     },
   };
 };
