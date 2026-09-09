@@ -74,6 +74,5 @@ test("Discord operational packages contain no payload-level debug logging", () =
   ].join("\n");
 
   expect(operationalPackages).not.toContain("base episode");
-  expect(operationalPackages).not.toContain("detail=${");
   expect(operationalPackages).not.toContain("reason: ${decision.reason}");
 });

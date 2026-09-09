@@ -23,8 +23,12 @@ export class DiscordIngestApp {
       for (const url of urls) {
         try {
           await this.processUrl(message, url);
-        } catch {
-          this.logger(`[ingest-error] channel=${message.channelId}`);
+        } catch (error: unknown) {
+          const detail =
+            error instanceof Error ? error.stack ?? error.message : String(error);
+          this.logger(
+            `[ingest-error] channel=${message.channelId} url=${url}\n${detail}`,
+          );
           await this.transport.sendMessage(
             message.channelId,
             `URLの取り込み中にエラーが発生しました: ${url}`,

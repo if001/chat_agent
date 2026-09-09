@@ -65,7 +65,9 @@ const main = async (): Promise<void> => {
   await discordClient.login(env.discordToken);
 };
 
-main().catch(() => {
-  process.stderr.write("[ingest-startup-error] startup failed\n");
+main().catch((error: unknown) => {
+  const message =
+    error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`[ingest-startup-error] ${message}\n`);
   process.exit(1);
 });

@@ -235,7 +235,7 @@ test("still replies when turn recording fails", async () => {
     undefined,
     undefined,
     async () => {
-      throw new Error("SECRET_USER_PAYLOAD record failed");
+      throw new Error("record failed");
     },
   );
 
@@ -251,8 +251,7 @@ test("still replies when turn recording fails", async () => {
     expect(transport.sent[0]?.content).toBe(
       `bot response: ${formatUserMessage("@bot hi")}`,
     );
-    expect(logs.join("\n")).toContain("turn recording failed");
-    expect(logs.join("\n")).not.toContain("SECRET_USER_PAYLOAD");
+    expect(logs.join("\n")).toContain("record failed");
   } finally {
     write.mockRestore();
   }

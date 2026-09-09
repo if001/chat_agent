@@ -52,9 +52,11 @@ export class QueueWorker {
         }
         try {
           await this.handler(task);
-        } catch {
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? (error.stack ?? error.message) : String(error);
           process.stdout.write(
-            `[queue-handler-error] taskId=${task.id} action=${task.action}\n`,
+            `[queue-handler-error] taskId=${task.id} action=${task.action} ${message}\n`,
           );
           await this.queue.release(task.id, undefined, "handler failed");
           currentNow = new Date();
@@ -63,8 +65,10 @@ export class QueueWorker {
 
         try {
           await this.queue.ack(task.id);
-        } catch {
-          process.stdout.write(`[queue-ack-error] taskId=${task.id}\n`);
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? (error.stack ?? error.message) : String(error);
+          process.stdout.write(`[queue-ack-error] taskId=${task.id} ${message}\n`);
           return;
         }
         currentNow = new Date();

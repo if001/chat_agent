@@ -197,8 +197,10 @@ export class DiscordBotApp {
   }
 
   private sendTypingBestEffort(channelId: string): void {
-    void this.transport.sendTyping(channelId).catch(() => {
-      process.stdout.write("[discord-typing-error] send failed\n");
+    void this.transport.sendTyping(channelId).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(`[discord-typing-error] ${message}\n`);
     });
   }
 
@@ -229,8 +231,10 @@ export class DiscordBotApp {
       await this.onTurnRecorded(
         responseInputTurnRecord(envelope, assistantContent, timestamp),
       );
-    } catch {
-      process.stdout.write("[memory-system-error] turn recording failed\n");
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stdout.write(`[memory-system-error] ${message}\n`);
     }
   }
 
@@ -263,9 +267,11 @@ export class DiscordBotApp {
         threadId: task.targetThreadId,
         userId: task.authorId,
       });
-    } catch {
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(
-        "[simple-pomdp-error] conversation trigger failed\n",
+        `[simple-pomdp-error] conversation trigger failed: ${message}\n`,
       );
       return null;
     }
@@ -283,9 +289,11 @@ export class DiscordBotApp {
         threadId: task.targetThreadId,
         userId: task.userId,
       });
-    } catch {
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(
-        "[simple-pomdp-error] pending interaction restore failed\n",
+        `[simple-pomdp-error] pending interaction restore failed: ${message}\n`,
       );
       return task.sourceInteractionId ?? null;
     }
@@ -312,9 +320,11 @@ export class DiscordBotApp {
         kind,
         ...(proactiveEvidence ? { proactiveEvidence } : {}),
       });
-    } catch {
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
       process.stdout.write(
-        "[request-context-error] context build failed\n",
+        `[request-context-error] context build failed: ${message}\n`,
       );
       return undefined;
     }

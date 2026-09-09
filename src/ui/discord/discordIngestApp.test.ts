@@ -156,7 +156,8 @@ test("reports ingest errors and continues processing", async () => {
   });
 
   expect(logs[0]).toContain("[ingest-error]");
-  expect(logs[0]).not.toContain("https://example.com/fail");
+  expect(logs[0]).toContain("https://example.com/fail");
+  expect(logs[0]).toContain("failed to fetch");
   expect(transport.sent[0]?.content).toContain("エラーが発生しました");
   expect(transport.sent[1]?.content).toContain("保存しました: Readme");
 });

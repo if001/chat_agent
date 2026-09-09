@@ -286,7 +286,9 @@ const main = async (): Promise<void> => {
   await discordClient.login(env.discordToken);
 };
 
-main().catch(() => {
-  process.stdout.write("[discord-startup-error] startup failed\n");
+main().catch((error: unknown) => {
+  const message =
+    error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stdout.write(`[discord-startup-error] ${message}\n`);
   process.exit(1);
 });
