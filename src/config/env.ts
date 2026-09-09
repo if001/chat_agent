@@ -21,6 +21,10 @@ export interface AppEnv {
   ollamaEmbeddingModel: string;
   ollamaEmbeddingDimension: number;
   deepAgentSkillsSources: string[];
+  deepAgentContextWindowTokens: number;
+  deepAgentSummarizationTriggerFraction: number;
+  deepAgentRecentInteractions: number;
+  deepAgentToolResultMaxChars: number;
   queueDir: string;
   simplePomdpStoreDir: string;
 }
@@ -31,6 +35,30 @@ const required = (name: string): string => {
     throw new Error(`Missing environment variable: ${name}`);
   }
   return value;
+};
+
+const positiveNumber = (name: string, value: string): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return parsed;
+};
+
+const positiveInteger = (name: string, value: string): number => {
+  const parsed = positiveNumber(name, value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+};
+
+const fractionBeforeLimit = (name: string, value: string): number => {
+  const parsed = positiveNumber(name, value);
+  if (parsed >= 1) {
+    throw new Error(`${name} must be less than 1`);
+  }
+  return parsed;
 };
 
 export const loadEnv = (): AppEnv => ({
@@ -69,6 +97,22 @@ export const loadEnv = (): AppEnv => ({
     .split(",")
     .map((v) => v.trim())
     .filter((v) => v.length > 0),
+  deepAgentContextWindowTokens: positiveInteger(
+    "OLLAMA_CONTEXT_WINDOW_TOKENS",
+    process.env.OLLAMA_CONTEXT_WINDOW_TOKENS ?? "32768",
+  ),
+  deepAgentSummarizationTriggerFraction: fractionBeforeLimit(
+    "DEEPAGENT_SUMMARIZATION_TRIGGER_FRACTION",
+    process.env.DEEPAGENT_SUMMARIZATION_TRIGGER_FRACTION ?? "0.7",
+  ),
+  deepAgentRecentInteractions: positiveInteger(
+    "DEEPAGENT_RECENT_INTERACTIONS",
+    process.env.DEEPAGENT_RECENT_INTERACTIONS ?? "4",
+  ),
+  deepAgentToolResultMaxChars: positiveInteger(
+    "DEEPAGENT_TOOL_RESULT_MAX_CHARS",
+    process.env.DEEPAGENT_TOOL_RESULT_MAX_CHARS ?? "8000",
+  ),
   queueDir: process.env.QUEUE_DIR ?? "data/queues",
   simplePomdpStoreDir:
     process.env.SIMPLE_POMDP_STORE_DIR ?? "data/simple-pomdp-system",

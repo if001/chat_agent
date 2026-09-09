@@ -8,7 +8,6 @@ import {
   SimpleWebClient,
 } from "@chat-agent/knowledge-access";
 import {
-  UserMemoryStore,
 } from "../../core/types";
 
 class InMemoryKnowledgeRepo implements KnowledgeRepository {
@@ -58,9 +57,13 @@ class InMemoryKnowledgeRepo implements KnowledgeRepository {
   }
 }
 
-class InMemoryUserMemoryStore implements UserMemoryStore {
+class InMemoryUserMemoryStore {
   async rememberUserNote() {
-    return { id: 1, note: "note", createdAt: new Date() };
+    return {
+      ok: true,
+      action: "create" as const,
+      note: { id: 1, note: "note", createdAt: new Date() },
+    };
   }
 
   async searchUserNotes() {
@@ -68,7 +71,7 @@ class InMemoryUserMemoryStore implements UserMemoryStore {
   }
 
   async replaceUserNote() {
-    return null;
+    return { ok: false };
   }
 
   async deleteUserNote() {
@@ -107,13 +110,7 @@ integrationTest(
     });
     const tools = createCustomTools({
       knowledgeAccessService,
-      userMemoryStore: new InMemoryUserMemoryStore(),
-      userMemoryWritePlanner: {
-        decide: async () => ({
-          action: "create" as const,
-          reason: "integration fixture",
-        }),
-      },
+      userMemoryClient: new InMemoryUserMemoryStore(),
       botId: "b1",
       runtimeContext: {
         current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),

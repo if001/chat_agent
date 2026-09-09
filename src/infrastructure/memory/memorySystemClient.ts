@@ -1,4 +1,42 @@
+import type {
+  MemorySystemService as PackageMemorySystemService,
+  DailyEvent as PackageDailyEvent,
+  GetDailyEventsByDateInput as PackageGetDailyEventsByDateInput,
+  RememberDailyEventInput as PackageRememberDailyEventInput,
+  SearchDailyEventsInput as PackageSearchDailyEventsInput,
+  UserMemoryWriteResult as PackageUserMemoryWriteResult,
+  UserNote as PackageUserNote,
+  MemoryCatalog as PackageMemoryCatalog,
+  MemoryCatalogRequest as PackageMemoryCatalogRequest,
+  MemorySearchRequest as PackageMemorySearchRequest,
+  MemorySearchResult as PackageMemorySearchResult,
+} from "@chat-agent/memory-system";
+
 type ChatRole = "system" | "user" | "assistant";
+
+export type MemoryUserNote = PackageUserNote;
+export type UserMemoryWriteResult = PackageUserMemoryWriteResult;
+export type DailyEvent = PackageDailyEvent;
+export type RememberDailyEventInput = PackageRememberDailyEventInput;
+export type SearchDailyEventsInput = PackageSearchDailyEventsInput;
+export type GetDailyEventsByDateInput = PackageGetDailyEventsByDateInput;
+export type MemoryCatalog = PackageMemoryCatalog;
+export type MemoryCatalogRequest = PackageMemoryCatalogRequest;
+export type MemorySearchRequest = PackageMemorySearchRequest;
+export type MemorySearchResult = PackageMemorySearchResult;
+type MemorySystemService = Pick<
+  PackageMemorySystemService,
+  | "ingestTurnRecord"
+  | "search"
+  | "rememberUserNote"
+  | "searchUserNotes"
+  | "replaceUserNote"
+  | "deleteUserNote"
+  | "rememberDailyEvent"
+  | "searchDailyEvents"
+  | "getDailyEventsByDate"
+  | "inspectCatalog"
+>;
 
 interface TurnMessage {
   role: ChatRole;
@@ -15,40 +53,39 @@ export interface TurnRecordInput {
   createdAtIso: string;
 }
 
-interface MemorySystemService {
-  ingestTurnRecord(input: TurnRecordInput): Promise<void>;
-  queryApplicablePolicyCards(input: {
-    botId: string;
-    threadId: string;
-    currentContext: string;
-    limit?: number;
-  }): Promise<
-    Array<{
-      id: string;
-      appliesWhen: string;
-      recommendedBehavior: string;
-      avoidBehavior?: string;
-      episodeIds: string[];
-    }>
-  >;
-}
-
 export interface MemoryPolicyCard {
-  id: string;
+  policyCardId: string;
   appliesWhen: string;
   recommendedBehavior: string;
   avoidBehavior?: string;
-  episodeIds: string[];
 }
 
 export interface MemorySystemClient {
   ingestTurnRecord(input: TurnRecordInput): Promise<void>;
-  queryApplicablePolicyCards(input: {
+  searchPolicyCards(input: {
     botId: string;
     threadId: string;
-    currentContext: string;
+    userId: string;
+    query: string;
     limit?: number;
   }): Promise<MemoryPolicyCard[]>;
+  rememberUserNote(userId: string, note: string): Promise<UserMemoryWriteResult>;
+  searchUserNotes(
+    userId: string,
+    query: string,
+    limit: number,
+  ): Promise<MemoryUserNote[]>;
+  replaceUserNote(
+    userId: string,
+    noteId: number,
+    note: string,
+  ): Promise<UserMemoryWriteResult>;
+  deleteUserNote(userId: string, noteId: number): Promise<boolean>;
+  rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent>;
+  searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]>;
+  getDailyEventsByDate(input: GetDailyEventsByDateInput): Promise<DailyEvent[]>;
+  inspectCatalog(input: MemoryCatalogRequest): Promise<MemoryCatalog>;
+  searchMemory(input: MemorySearchRequest): Promise<MemorySearchResult>;
 }
 
 export interface MemorySystemClientOptions {
@@ -78,8 +115,11 @@ export const formatPolicyCardsForPrompt = (
 
 export const createMemorySystemClient = (
   options: MemorySystemClientOptions,
+  loadService: (
+    options: MemorySystemClientOptions,
+  ) => MemorySystemService | null = loadMemorySystemService,
 ): MemorySystemClient => {
-  const service = loadMemorySystemService(options);
+  const service = loadService(options);
   return {
     ingestTurnRecord: async (input) => {
       if (!service) {
@@ -95,20 +135,103 @@ export const createMemorySystemClient = (
         );
       } catch (error: unknown) {
         const message =
-          error instanceof Error
-            ? (error.stack ?? error.message)
-            : String(error);
+          error instanceof Error ? (error.stack ?? error.message) : String(error);
         process.stdout.write(
           `[memory-ingest] failed botId=${input.botId} threadId=${input.threadId}: ${message}\n`,
         );
       }
     },
-    queryApplicablePolicyCards: async (input) => {
+    searchPolicyCards: async (input) => {
       if (!service) {
         return [];
       }
-      return service.queryApplicablePolicyCards(input);
+      const result = await service.search({
+        botId: input.botId,
+        threadId: input.threadId,
+        userId: input.userId,
+        query: input.query,
+        scopes: ["policy_cards"],
+        limits: { policy_cards: input.limit ?? 3 },
+      });
+      return result.policyCards?.status === "found"
+        ? result.policyCards.data
+        : [];
     },
+    rememberUserNote: async (userId, note) => {
+      if (!service) return { ok: false, error: "memory-system is unavailable" };
+      return service.rememberUserNote({ userId, note });
+    },
+    searchUserNotes: async (userId, query, limit) => {
+      if (!service) return [];
+      return service.searchUserNotes({ userId, query, limit });
+    },
+    replaceUserNote: async (userId, noteId, note) => {
+      if (!service) return { ok: false, error: "memory-system is unavailable" };
+      return service.replaceUserNote({ userId, noteId, note });
+    },
+    deleteUserNote: async (userId, noteId) => {
+      if (!service) return false;
+      return service.deleteUserNote({ userId, noteId });
+    },
+    rememberDailyEvent: async (input) => {
+      if (!service) throw new Error("memory-system is unavailable");
+      return service.rememberDailyEvent(input);
+    },
+    searchDailyEvents: async (input) => {
+      if (!service) return [];
+      return service.searchDailyEvents(input);
+    },
+    getDailyEventsByDate: async (input) => {
+      if (!service) return [];
+      return service.getDailyEventsByDate(input);
+    },
+    inspectCatalog: async (input) => {
+      if (!service) return unavailableCatalog("memory-system is unavailable");
+      return service.inspectCatalog(input);
+    },
+    searchMemory: async (input) => {
+      if (!service) return unavailableSearchResult(input);
+      return service.search(input);
+    },
+  };
+};
+
+const unavailableCatalog = (reason: string): MemoryCatalog => {
+  const entry = () => ({
+    status: "unavailable" as const,
+    available: false,
+    topics: [],
+    reason,
+  });
+  return {
+    status: "unavailable",
+    conversationHistory: entry(),
+    userMemory: entry(),
+    dailyEvents: entry(),
+    policyCards: entry(),
+  };
+};
+
+const unavailableSearchResult = (
+  input: MemorySearchRequest,
+): MemorySearchResult => {
+  const unavailable = {
+    status: "unavailable" as const,
+    reason: "memory-system is unavailable",
+  };
+  return {
+    ...(input.scopes.includes("conversation_history")
+      ? { conversationHistory: unavailable }
+      : {}),
+    ...(input.scopes.includes("user_memory")
+      ? { userMemory: unavailable }
+      : {}),
+    ...(input.scopes.includes("daily_events")
+      ? { dailyEvents: unavailable }
+      : {}),
+    ...(input.scopes.includes("policy_cards")
+      ? { policyCards: unavailable }
+      : {}),
   };
 };
 

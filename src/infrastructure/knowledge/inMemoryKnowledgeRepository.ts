@@ -1,5 +1,6 @@
 import {
   KnowledgeRepository,
+  KnowledgeCatalogSourceItem,
   SavedArticle,
   SearchKnowledgeOptions,
   SearchResultItem,
@@ -62,5 +63,18 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepository {
     const filtered = mapped.filter((item) => item.score >= minScore);
     const limit = options?.limit ?? 10;
     return filtered.slice(0, limit);
+  }
+
+  async listKnowledgeCatalogItems(
+    limit: number,
+  ): Promise<KnowledgeCatalogSourceItem[]> {
+    return [...this.byId.values()]
+      .sort((left, right) => right.createdAt.valueOf() - left.createdAt.valueOf())
+      .slice(0, limit)
+      .map((article) => ({
+        title: article.title,
+        tags: article.tags,
+        updatedAt: article.createdAt,
+      }));
   }
 }

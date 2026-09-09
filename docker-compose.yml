@@ -37,3 +37,14 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data
+
+  memory_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/memory-system/lib/cli/runBackground.js"]
+    env_file:
+      - .env.ao
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data

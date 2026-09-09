@@ -7,9 +7,8 @@ import {
   AgentRequest,
   AgentRuntime,
   BotIdentity,
-  DailyEventRepository,
-  UserMemoryStore,
 } from "../../core/types";
+import { MemorySystemClient } from "../../infrastructure/memory/memorySystemClient";
 import { RequestContextBuilder } from "../../infrastructure/agent/requestContextBuilder";
 import { DeepAgentRuntime } from "../../infrastructure/agent/deepAgentRuntime";
 
@@ -58,10 +57,9 @@ test("still returns answer when turn recording fails", async () => {
   expect(result).toBe("terminal answer");
 });
 
-test("passes fresh policy context per turn while keeping the system prompt static", async () => {
+test("keeps the system prompt static and does not prefetch policy context", async () => {
   const runtime = new RuntimeStub();
   const policyInputs: string[] = [];
-  let analysisCalls = 0;
   const builder = new RequestContextBuilder(
     emptyUserMemoryStore,
     emptyDailyEventRepository,
@@ -72,17 +70,6 @@ test("passes fresh policy context per turn while keeping the system prompt stati
       },
     },
     () => new Date("2026-09-02T00:00:00.000Z"),
-    {
-      analyze: async () => {
-        analysisCalls += 1;
-        return {
-          focus: null,
-          reason: "test",
-          conversationTrigger: "ineligible",
-          conversationTriggerReason: "test",
-        };
-      },
-    },
   );
   const app = new TerminalChatApp(
     identity,
@@ -97,14 +84,9 @@ test("passes fresh policy context per turn while keeping the system prompt stati
     identity.systemPrompt,
     identity.systemPrompt,
   ]);
-  expect(runtime.requests[0]?.requestContext).toContain(
-    "## Bot-specific PolicyCard\npolicy: first",
-  );
-  expect(runtime.requests[1]?.requestContext).toContain(
-    "## Bot-specific PolicyCard\npolicy: second",
-  );
-  expect(policyInputs).toEqual(["first", "second"]);
-  expect(analysisCalls).toBe(2);
+  expect(runtime.requests[0]?.requestContext).not.toContain("PolicyCard");
+  expect(runtime.requests[1]?.requestContext).not.toContain("PolicyCard");
+  expect(policyInputs).toEqual([]);
 });
 
 test("still returns answer when request context resolver fails", async () => {
@@ -125,26 +107,13 @@ test("still returns answer when request context resolver fails", async () => {
   expect(runtime.requests[0]?.requestContext).toBeUndefined();
 });
 
-test("builds shared memory, daily event, time, policy, and focus context", async () => {
+test("builds time and origin context without prefetched memory or focus", async () => {
   const runtime = new RuntimeStub();
   const builder = new RequestContextBuilder(
     userMemoryStore,
     dailyEventRepository,
     { load: async () => "use explicit constraints" },
     () => new Date("2026-09-02T00:00:00.000Z"),
-    {
-      analyze: async () => ({
-        focus: {
-          currentTopic: "terminal integration",
-          currentTopicReason: "the terminal request establishes the topic",
-          currentTopicStatus: "active",
-          currentTopicStatusReason: "the terminal topic is active",
-        },
-        reason: "test focus",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: "test focus",
-      }),
-    },
   );
   const app = new TerminalChatApp(
     identity,
@@ -157,10 +126,11 @@ test("builds shared memory, daily event, time, policy, and focus context", async
 
   const context = runtime.requests[0]?.requestContext;
   expect(context).toContain("Current time: 2026-09-02T00:00:00.000Z");
-  expect(context).toContain("prefers concise answers");
+  expect(context).toContain("Input origin: human");
+  expect(context).not.toContain("prefers concise answers");
   expect(context).not.toContain("2026-09-03: release day");
-  expect(context).toContain("use explicit constraints");
-  expect(context).toContain("currentTopic: terminal integration");
+  expect(context).not.toContain("use explicit constraints");
+  expect(context).not.toContain("Conversation Focus");
 });
 
 test("passes stable trusted terminal identity and thread on every turn", async () => {
@@ -265,7 +235,7 @@ test("uses bot-scoped checkpoint threads and caches only static prompts", async 
   ]);
 });
 
-const userMemoryStore: UserMemoryStore = {
+const userMemoryStore = {
   rememberUserNote: async () => {
     throw new Error("not used");
   },
@@ -276,19 +246,18 @@ const userMemoryStore: UserMemoryStore = {
   deleteUserNote: async () => false,
 };
 
-const emptyUserMemoryStore: UserMemoryStore = {
+const emptyUserMemoryStore = {
   ...userMemoryStore,
   searchUserNotes: async () => [],
 };
 
-const dailyEventRepository: DailyEventRepository = {
+const dailyEventRepository: Pick<MemorySystemClient, "searchDailyEvents"> = {
   rememberDailyEvent: async () => {
     throw new Error("not used");
   },
   searchDailyEvents: async () => [
     {
       id: 1,
-      botId: "shared",
       userId: TERMINAL_USER_ID,
       eventDate: "2026-09-03",
       summary: "release day",
@@ -299,7 +268,7 @@ const dailyEventRepository: DailyEventRepository = {
   getDailyEventsByDate: async () => [],
 };
 
-const emptyDailyEventRepository: DailyEventRepository = {
+const emptyDailyEventRepository: Pick<MemorySystemClient, "searchDailyEvents"> = {
   ...dailyEventRepository,
   searchDailyEvents: async () => [],
 };

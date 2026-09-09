@@ -7,7 +7,6 @@ import {
   ChannelMessage,
 } from "../../core/types";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
-import type { ConversationFocus } from "../../infrastructure/agent/conversationFocus";
 
 const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 
@@ -33,6 +32,7 @@ class RuntimeStub implements AgentRuntime {
   public readonly systemPrompts: string[] = [];
   public readonly requestContexts: Array<string | undefined> = [];
   public readonly userIds: string[] = [];
+  public readonly origins: unknown[] = [];
   private readonly blockers = new Map<string, Promise<void>>();
   private readonly releases = new Map<string, () => void>();
 
@@ -49,15 +49,13 @@ class RuntimeStub implements AgentRuntime {
     this.releases.get(content)?.();
   }
 
-  async respond(request: {
-    userId: string;
-    systemPrompt: string;
-    requestContext?: string;
-    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
-  }): Promise<{ content: string }> {
+  async respond(request: AgentRequest): Promise<{ content: string }> {
     this.systemPrompts.push(request.systemPrompt);
     this.requestContexts.push(request.requestContext);
     this.userIds.push(request.userId);
+    this.origins.push(
+      request.messages.at(-1)?.additional_kwargs?.response_input_origin,
+    );
     const content = request.messages.at(-1)?.content ?? "";
     this.started.push(content);
     const blocker = this.blockers.get(content);
@@ -222,6 +220,13 @@ test("second Discord response can use prior checkpoint state for the same bot an
 test("still replies when turn recording fails", async () => {
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
+  const logs: string[] = [];
+  const write = jest
+    .spyOn(process.stdout, "write")
+    .mockImplementation((chunk) => {
+      logs.push(String(chunk));
+      return true;
+    });
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -234,15 +239,22 @@ test("still replies when turn recording fails", async () => {
     },
   );
 
-  app.start();
-  await transport.emit({
-    channelId: "mention-channel",
-    authorId: "user-1",
-    content: "@bot hi",
-    mentionsBot: true,
-  });
+  try {
+    app.start();
+    await transport.emit({
+      channelId: "mention-channel",
+      authorId: "user-1",
+      content: "@bot hi",
+      mentionsBot: true,
+    });
 
-  expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("@bot hi")}`);
+    expect(transport.sent[0]?.content).toBe(
+      `bot response: ${formatUserMessage("@bot hi")}`,
+    );
+    expect(logs.join("\n")).toContain("record failed");
+  } finally {
+    write.mockRestore();
+  }
 });
 
 test("injects memory policy context into system prompt when resolver returns cards", async () => {
@@ -411,6 +423,7 @@ test("injects memory policy context for scheduled agent input", async () => {
 
   expect(runtime.requestContexts[0]).toContain("scheduled policy");
   expect(runtime.userIds[0]).toBe("user-1");
+  expect(runtime.origins[0]).toBe("proactive");
   expect(transport.sent[0]?.content).toBe("bot response: scheduled check-in");
   expect(records[0]).toMatchObject({
     kind: "proactive",
@@ -434,6 +447,7 @@ test("injects memory policy context for scheduled agent input", async () => {
     kind: "human",
     sourceInteractionId: "interaction-1",
   });
+  expect(runtime.origins[1]).toBe("human");
   await transport.emit({
     channelId: "mention-channel",
     authorId: "user-1",
@@ -552,16 +566,16 @@ test("integrates a conversation topic into one reply and links its next reaction
 });
 
 test.each([
-  ["active", 0],
-  ["complete", 1],
+  ["skip", 0],
+  ["opportunity", 1],
 ] as const)(
-  "uses %s conversation focus when deciding whether to plan a new topic",
-  async (currentTopicStatus, expectedPlans) => {
+  "uses the %s opportunity result when deciding whether to plan a new topic",
+  async (opportunityKind, expectedPlans) => {
     const transport = new TransportStub();
     const runtime = new RuntimeStub();
     const planned: string[] = [];
-    const analyzed: string[] = [];
-    const contextualized: Array<ConversationFocus | null | undefined> = [];
+    const assessed: string[] = [];
+    const contextualized: string[] = [];
     const app = new DiscordBotApp(
       identity,
       runtime,
@@ -570,8 +584,8 @@ test.each([
       undefined,
       undefined,
       undefined,
-      async ({ conversationFocus }) => {
-        contextualized.push(conversationFocus);
+      async ({ kind }) => {
+        contextualized.push(kind);
         return undefined;
       },
       async () => {
@@ -582,18 +596,10 @@ test.each([
         };
       },
       async ({ currentContext }) => {
-        analyzed.push(currentContext);
-        return {
-          focus: {
-            currentTopic: "現在の作業",
-            currentTopicReason: "fixture current topic",
-            currentTopicStatus,
-            currentTopicStatusReason: "fixture status",
-          },
-          reason: "test analysis",
-          conversationTrigger: "eligible",
-          conversationTriggerReason: "test eligibility",
-        };
+        assessed.push(currentContext);
+        return opportunityKind === "opportunity"
+          ? { kind: "opportunity", reason: "prior topic is complete" }
+          : { kind: "skip", reason: "active_conversation", detail: "current work is active" };
       },
     );
 
@@ -606,15 +612,8 @@ test.each([
     });
 
     expect(planned).toHaveLength(expectedPlans);
-    expect(analyzed).toHaveLength(1);
-    expect(contextualized).toEqual([
-      {
-        currentTopic: "現在の作業",
-        currentTopicReason: "fixture current topic",
-        currentTopicStatus,
-        currentTopicStatusReason: "fixture status",
-      },
-    ]);
+    expect(assessed).toHaveLength(1);
+    expect(contextualized).toEqual([expectedPlans ? "conversation" : "human"]);
     expect(transport.sent).toHaveLength(1);
   },
 );
@@ -646,13 +645,9 @@ test.each([
         };
       },
       async () => ({
-        focus: {
-          currentTopicStatus: "complete",
-          currentTopicStatusReason: "fixture complete",
-        },
-        reason: "semantic test",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: triggerReason,
+        kind: "skip",
+        reason: "confirmation",
+        detail: triggerReason,
       }),
     );
 
@@ -673,7 +668,7 @@ test("allows a technical error-handling question when semantic analysis is eligi
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
   const planned: string[] = [];
-  const analyzed: string[] = [];
+  const assessed: string[] = [];
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -691,16 +686,10 @@ test("allows a technical error-handling question when semantic analysis is eligi
       };
     },
     async ({ currentContext }) => {
-      analyzed.push(currentContext);
+      assessed.push(currentContext);
       return {
-        focus: {
-          currentTopicStatus: "complete",
-          currentTopicStatusReason: "fixture complete",
-        },
-        reason: "technical explanation can conclude in this reply",
-        conversationTrigger: "eligible",
-        conversationTriggerReason:
-          "error is a technical subject, not an incident report",
+        kind: "opportunity",
+        reason: "error is a technical subject, not an incident report",
       };
     },
   );
@@ -713,7 +702,7 @@ test("allows a technical error-handling question when semantic analysis is eligi
     mentionsBot: true,
   });
 
-  expect(analyzed).toHaveLength(1);
+  expect(assessed).toHaveLength(1);
   expect(planned).toEqual(["planned"]);
   expect(transport.sent).toHaveLength(1);
   expect(runtime.requestContexts[0]).toContain("関連する話題");
@@ -843,6 +832,9 @@ test("discards a stale response and replans once with all newer user input", asy
   const runtime = new RuntimeStub();
   const contextInputs: string[] = [];
   const records: TurnRecordInput[] = [];
+  let pendingInteractionId: string | null = null;
+  let opportunityCalls = 0;
+  let planCalls = 0;
   runtime.block(formatUserMessage("first"));
 
   const app = new DiscordBotApp(
@@ -859,6 +851,27 @@ test("discards a stale response and replans once with all newer user input", asy
       contextInputs.push(currentContext);
       return `focus for ${currentContext}`;
     },
+    async () => {
+      planCalls += 1;
+      pendingInteractionId = "conversation-stale-1";
+      return {
+        text: "one integrated topic",
+        sourceInteractionId: pendingInteractionId,
+      };
+    },
+    async () => {
+      opportunityCalls += 1;
+      return {
+        focus: {
+          currentTopicStatus: "complete",
+          currentTopicStatusReason: "fixture complete",
+        },
+        reason: "one topic can be integrated",
+        conversationTrigger: "eligible",
+        conversationTriggerReason: "fixture eligible",
+      };
+    },
+    async () => pendingInteractionId,
   );
 
   app.start();
@@ -912,11 +925,14 @@ test("discards a stale response and replans once with all newer user input", asy
   expect(records).toHaveLength(1);
   expect(records[0]).toMatchObject({
     kind: "human",
+    sourceInteractionId: "conversation-stale-1",
     messages: [
       { role: "user", content: mergedInput },
       { role: "assistant", content: `bot response: ${mergedInput}` },
     ],
   });
+  expect(opportunityCalls).toBe(1);
+  expect(planCalls).toBe(1);
 });
 
 test("does not send a duplicate reply when ack fails after a successful response", async () => {

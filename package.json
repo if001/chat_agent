@@ -10,6 +10,7 @@
     "start:ao": "tsx --env-file=.env.ao src/runDiscord.ts",
     "start:aka": "tsx --env-file=.env.aka src/runDiscord.ts",
     "start:ingest": "tsx --env-file=.env.ao src/runIngest.ts",
+    "start:memory": "tsx --env-file=.env.ao packages/memory-system/src/cli/runBackground.ts",
     "start:simple-pomdp": "tsx --env-file=.env.ao packages/simple-pomdp-system/src/cli/runBackground.ts",
     "build": "tsc -p .",
     "build:packages": "npm --prefix packages/knowledge-access run build && npm --prefix packages/memory-system run build && npm --prefix packages/queue run build && npm --prefix packages/simple-pomdp-system run build",

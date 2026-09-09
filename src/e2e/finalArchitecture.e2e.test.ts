@@ -1,43 +1,51 @@
 import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import {
   DailyEvent,
-  DailyEventRepository,
-  UserMemoryStore,
-  UserNote,
-} from "../core/types";
-import {
-  createConversationAnalysisService,
-} from "../infrastructure/agent/conversationFocus";
+  MemorySystemClient,
+  MemoryUserNote,
+} from "../infrastructure/memory/memorySystemClient";
 import { createCustomTools } from "../infrastructure/agent/customTools";
 import { DeepAgentRuntime } from "../infrastructure/agent/deepAgentRuntime";
 import { RequestContextBuilder } from "../infrastructure/agent/requestContextBuilder";
 import { loadSystemPromptByBotId } from "../config/systemPromptLoader";
+import { longConversationFixture } from "./fixtures/longConversation";
 import {
-  completedConversationTurn,
-  longConversationFixture,
-} from "./fixtures/longConversation";
+  AgentRequest,
+  AgentRuntime,
+  ChannelMessage,
+} from "../core/types";
+import {
+  DiscordBotApp,
+  DiscordTransport,
+} from "../ui/discord/discordBotApp";
 
-class FixtureUserMemoryStore implements UserMemoryStore {
-  private notes: UserNote[] = [
+class FixtureUserMemoryStore {
+  private notes: MemoryUserNote[] = [
     {
       id: 1,
       note: "簡潔な回答を好む",
       createdAt: new Date("2026-08-01T00:00:00.000Z"),
     },
+    {
+      id: 2,
+      note: "ジャズをよく聴く",
+      createdAt: new Date("2026-08-02T00:00:00.000Z"),
+    },
   ];
 
-  async rememberUserNote(_userId: string, note: string): Promise<UserNote> {
+  async rememberUserNote(_userId: string, note: string) {
     const saved = { id: this.notes.length + 1, note, createdAt: new Date() };
     this.notes.push(saved);
-    return saved;
+    return { ok: true, action: "create" as const, note: saved };
   }
 
   async searchUserNotes(
     _userId: string,
-    _query: string,
+    query: string,
     limit: number,
-  ): Promise<UserNote[]> {
+  ): Promise<MemoryUserNote[]> {
     return this.notes
+      .filter((item) => item.note.includes(query))
       .slice(0, limit);
   }
 
@@ -45,14 +53,14 @@ class FixtureUserMemoryStore implements UserMemoryStore {
     _userId: string,
     noteId: number,
     note: string,
-  ): Promise<UserNote | null> {
+  ) {
     const index = this.notes.findIndex((item) => item.id === noteId);
     if (index < 0) {
-      return null;
+      return { ok: false };
     }
     const saved = { ...this.notes[index]!, note };
     this.notes[index] = saved;
-    return saved;
+    return { ok: true, action: "replace" as const, note: saved };
   }
 
   async deleteUserNote(_userId: string, noteId: number): Promise<boolean> {
@@ -60,9 +68,82 @@ class FixtureUserMemoryStore implements UserMemoryStore {
     this.notes = this.notes.filter((item) => item.id !== noteId);
     return this.notes.length < previousLength;
   }
+
+  async inspectCatalog() {
+    return {
+      status: "available" as const,
+      conversationHistory: {
+        status: "available" as const,
+        available: true,
+        topics: ["以前の音楽の会話"],
+      },
+      userMemory: {
+        status: "available" as const,
+        available: true,
+        topics: ["音楽の好み"],
+      },
+      dailyEvents: {
+        status: "available" as const,
+        available: true,
+        topics: ["release"],
+      },
+      policyCards: {
+        status: "empty" as const,
+        available: false,
+        topics: [],
+      },
+    };
+  }
+
+  async searchMemory(input: { botId: string; scopes: string[] }) {
+    return {
+      ...(input.scopes.includes("conversation_history")
+        ? {
+            conversationHistory: {
+              status: "found" as const,
+              data: [
+                {
+                  turnRecordId: "turn-old-music",
+                  occurredAt: "2026-07-01T09:00:00.000Z",
+                  excerpt: "ユーザーはジャズをよく聴くと話した",
+                },
+              ],
+            },
+          }
+        : {}),
+      ...(input.scopes.includes("user_memory")
+        ? {
+            userMemory: {
+              status: "found" as const,
+              data: [{ noteId: 2, note: "ジャズをよく聴く" }],
+            },
+          }
+        : {}),
+      ...(input.scopes.includes("policy_cards")
+        ? {
+            policyCards: {
+              status: "found" as const,
+              data: [
+                {
+                  policyCardId: `${input.botId}-policy`,
+                  appliesWhen: `${input.botId} handles this thread`,
+                  recommendedBehavior: `${input.botId} specific response`,
+                },
+              ],
+            },
+          }
+        : {}),
+    };
+  }
 }
 
-class FixtureDailyEvents implements DailyEventRepository {
+class FixtureDailyEvents
+  implements
+    Pick<
+      MemorySystemClient,
+      "rememberDailyEvent" | "searchDailyEvents" | "getDailyEventsByDate"
+    >
+{
   private readonly events: DailyEvent[] = [
     {
       id: 1,
@@ -98,8 +179,31 @@ class FixtureDailyEvents implements DailyEventRepository {
 }
 
 const knowledgeAccessService = {
-  searchSavedKnowledge: async () => [],
-  getSavedArticle: async () => null,
+  inspectCatalog: async () => ({
+    status: "available" as const,
+    available: true,
+    topics: ["ジャズ即興入門", "music"],
+  }),
+  searchSavedKnowledge: async () => [
+    {
+      articleId: "article-jazz",
+      score: 0.91,
+      title: "ジャズ即興入門",
+      summary: "コード進行を聴く練習方法",
+      tags: ["music"],
+      url: "https://example.com/jazz",
+    },
+  ],
+  getSavedArticle: async () => ({
+    id: "article-jazz",
+    url: "https://example.com/jazz",
+    title: "ジャズ即興入門",
+    summary: "コード進行を聴く練習方法",
+    content: "まずII-V-Iを歌って確認する。",
+    tags: ["music"],
+    rawMarkdown: "# secret raw source payload",
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  }),
   webList: async () => [],
   webPage: async ({ url }: { url: string }) => ({
     url,
@@ -125,21 +229,73 @@ const findTool = (
   return selected;
 };
 
-test("fixed long conversation preserves corrections, chronology, focus, and bot scope", async () => {
+class E2eDiscordTransport implements DiscordTransport {
+  private handler: ((message: ChannelMessage) => Promise<void>) | null = null;
+  readonly sent: string[] = [];
+
+  onMessage(handler: (message: ChannelMessage) => Promise<void>): void {
+    this.handler = handler;
+  }
+
+  async sendMessage(_channelId: string, content: string): Promise<void> {
+    this.sent.push(content);
+  }
+
+  async sendTyping(): Promise<void> {}
+
+  async emit(message: ChannelMessage): Promise<void> {
+    if (!this.handler) throw new Error("Discord handler is not registered");
+    await this.handler(message);
+  }
+}
+
+class CatalogDrivenRuntime implements AgentRuntime {
+  readonly requests: AgentRequest[] = [];
+
+  constructor(
+    private readonly tools: Array<{
+      name: string;
+      invoke(input: unknown): Promise<unknown>;
+    }>,
+  ) {}
+
+  async respond(request: AgentRequest) {
+    this.requests.push(request);
+    const catalog = JSON.parse(
+      (await findTool(this.tools, "inspect_context_catalog").invoke({
+        query: "昔話した音楽",
+      })) as string,
+    ) as { memory: { conversationHistory: { available: boolean } } };
+    if (!catalog.memory.conversationHistory.available) {
+      return { content: "過去の会話は見つかりませんでした。" };
+    }
+    const [conversation, articles] = await Promise.all([
+      findTool(this.tools, "search_conversation_memory").invoke({
+        query: "昔話した音楽",
+      }),
+      findTool(this.tools, "search_saved_knowledge").invoke({
+        query: "ジャズ",
+      }),
+    ]);
+    const history = JSON.parse(conversation as string) as {
+      data: Array<{ excerpt: string }>;
+    };
+    const knowledge = JSON.parse(articles as string) as Array<{
+      title: string;
+    }>;
+    return {
+      content: `${history.data[0]?.excerpt}。保存記事「${knowledge[0]?.title}」もあります。`,
+    };
+  }
+}
+
+test("fixed long conversation uses checkpoint context without eager memory injection", async () => {
   const userMemoryStore = new FixtureUserMemoryStore();
   const dailyEventRepository = new FixtureDailyEvents();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryStore,
-    userMemoryWritePlanner: {
-      decide: async ({ explicitTargetNoteId }) => ({
-        destination: "user_memory" as const,
-        action: "replace" as const,
-        targetNoteId: explicitTargetNoteId as number,
-        reason: "fixture correction",
-      }),
-    },
-    dailyEventRepository,
+    userMemoryClient: userMemoryStore,
+    dailyEventClient: dailyEventRepository,
     botId: "ao",
     runtimeContext: {
       current: () => ({
@@ -152,58 +308,95 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
 
   const searched = JSON.parse(
     (await findTool(tools, "search_user_notes").invoke({ query: "簡潔" })) as string,
-  ) as UserNote[];
+  ) as MemoryUserNote[];
   expect(searched).toHaveLength(1);
   await findTool(tools, "replace_user_note").invoke({
     noteId: searched[0]?.id,
     note: "詳しい回答を好む",
   });
 
-  const createFixtureAnalysis = (includeCompleted: boolean = false) =>
-    createConversationAnalysisService({
-      reader: {
-        listRecentTurnRecords: async ({ botId, threadId, limit }) =>
-          [
-            ...longConversationFixture,
-            ...(includeCompleted ? [completedConversationTurn] : []),
-          ]
-            .filter(
-              (record) =>
-                record.botId === botId && record.threadId === threadId,
-            )
-            .slice(-limit),
-      },
-      model: {
-        generateJson: async <T>(_systemPrompt: string, userPrompt: string) =>
-          (userPrompt.includes("この件は解決しました")
-              ? {
-                currentTopicStatus: "complete",
-                currentTopicStatusReason:
-                  "the user explicitly says the issue is resolved",
-                reason: "fixture topic was completed",
-                conversationTrigger: "eligible",
-                conversationTriggerReason: "fixture topic is complete",
-              }
-              : {
-                currentTopic: "CIが失敗する理由は何ですか？",
-                currentTopicReason:
-                  "the user explicitly returns to the CI investigation",
-                unresolvedQuestion: "CIが失敗する理由は何ですか？",
-                unresolvedQuestionReason:
-                  "the cause of the CI failure has not been answered",
-                agentCommitment: "ログを確認して後で共有します。",
-                agentCommitmentReason:
-                  "the assistant said it would inspect and report the logs",
-                currentTopicStatus: "active",
-                currentTopicStatusReason:
-                  "the unresolved question and commitment remain active",
-                reason: "fixture returned to unresolved CI investigation",
-                conversationTrigger: "ineligible",
-                conversationTriggerReason: "fixture topic is active",
-              }) as T,
-      },
-    });
-  const conversationAnalysisService = createFixtureAnalysis();
+  const catalog = JSON.parse(
+    (await findTool(tools, "inspect_context_catalog").invoke({
+      query: "前に話した音楽",
+    })) as string,
+  ) as { memory: { conversationHistory: { topics: string[] } }; knowledge: { topics: string[] } };
+  expect(catalog.memory.conversationHistory.topics).toContain("以前の音楽の会話");
+  expect(catalog.knowledge.topics).toContain("ジャズ即興入門");
+  expect(JSON.stringify(catalog)).not.toContain("secret raw source payload");
+
+  const oldConversation = JSON.parse(
+    (await findTool(tools, "search_conversation_memory").invoke({
+      query: "昔話した音楽",
+    })) as string,
+  ) as { status: string; data: Array<{ excerpt: string }> };
+  expect(oldConversation.data[0]?.excerpt).toContain("ジャズ");
+
+  const paraphrasedPreference = JSON.parse(
+    (await findTool(tools, "search_user_memory").invoke({
+      query: "どんな音楽が好き？",
+    })) as string,
+  ) as { status: string; data: Array<{ note: string }> };
+  expect(paraphrasedPreference.data[0]?.note).toBe("ジャズをよく聴く");
+
+  const datedEvents = JSON.parse(
+    (await findTool(tools, "get_daily_events_by_date").invoke({
+      date: "2026-08-30",
+      windowDays: 0,
+    })) as string,
+  ) as DailyEvent[];
+  expect(datedEvents.some((event) => event.summary.includes("release 1.0"))).toBe(true);
+
+  const articles = JSON.parse(
+    (await findTool(tools, "search_saved_knowledge").invoke({ query: "ジャズ" })) as string,
+  ) as Array<{ articleId: string; score?: number; rawMarkdown?: string }>;
+  expect(articles).toEqual([
+    expect.objectContaining({ articleId: "article-jazz" }),
+  ]);
+  expect(articles[0]?.score).toBeUndefined();
+  expect(articles[0]?.rawMarkdown).toBeUndefined();
+  const article = JSON.parse(
+    (await findTool(tools, "get_saved_article").invoke({
+      articleId: "article-jazz",
+      detail: "content",
+    })) as string,
+  ) as { content: string; rawMarkdown?: string };
+  expect(article.content).toContain("II-V-I");
+  expect(article.rawMarkdown).toBeUndefined();
+
+  const akaTools = createCustomTools({
+    knowledgeAccessService,
+    userMemoryClient: userMemoryStore,
+    dailyEventClient: dailyEventRepository,
+    botId: "aka",
+    runtimeContext: {
+      current: () => ({
+        botId: "aka",
+        userId: "user-1",
+        threadId: "shared-thread",
+      }),
+    },
+  });
+  const [aoSharedMemory, akaSharedMemory, aoPolicy, akaPolicy] = await Promise.all([
+    findTool(tools, "search_user_memory").invoke({ query: "音楽" }),
+    findTool(akaTools, "search_user_memory").invoke({ query: "音楽" }),
+    findTool(tools, "search_response_policies").invoke({ query: "reply" }),
+    findTool(akaTools, "search_response_policies").invoke({ query: "reply" }),
+  ]);
+  expect(aoSharedMemory).toBe(akaSharedMemory);
+  expect(aoPolicy).toContain("ao-policy");
+  expect(akaPolicy).toContain("aka-policy");
+  expect(aoPolicy).not.toContain("aka-policy");
+  const [aoEvents, akaEvents, aoArticles, akaArticles] = await Promise.all([
+    findTool(tools, "get_daily_events_by_date").invoke({ date: "2026-08-30" }),
+    findTool(akaTools, "get_daily_events_by_date").invoke({
+      date: "2026-08-30",
+    }),
+    findTool(tools, "search_saved_knowledge").invoke({ query: "ジャズ" }),
+    findTool(akaTools, "search_saved_knowledge").invoke({ query: "ジャズ" }),
+  ]);
+  expect(aoEvents).toBe(akaEvents);
+  expect(aoArticles).toBe(akaArticles);
+
   const policyInputs: string[] = [];
   const builder = new RequestContextBuilder(
     userMemoryStore,
@@ -215,7 +408,6 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
       },
     },
     () => new Date("2026-09-01T09:00:00.000Z"),
-    conversationAnalysisService,
   );
   const build = (botId: string) =>
     builder.build({
@@ -227,63 +419,17 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     });
   const [aoContext, akaContext] = await Promise.all([build("ao"), build("aka")]);
 
-  expect(aoContext).toContain("詳しい回答を好む");
-  expect(akaContext).toContain("詳しい回答を好む");
+  expect(aoContext).not.toContain("詳しい回答を好む");
+  expect(akaContext).not.toContain("詳しい回答を好む");
   expect(aoContext).not.toContain("簡潔な回答を好む");
-  expect(aoContext.indexOf("CIの原因調査を再開した")).toBeLessThan(
-    aoContext.indexOf("release 1.0を公開した"),
-  );
-  expect(aoContext).toContain("ao-only policy");
-  expect(aoContext).toContain(
-    "currentTopicReason: the user explicitly returns to the CI investigation",
-  );
-  expect(aoContext).toContain(
-    "agentCommitmentReason: the assistant said it would inspect and report the logs",
-  );
+  expect(aoContext).not.toContain("CIの原因調査を再開した");
+  expect(aoContext).not.toContain("release 1.0を公開した");
+  expect(aoContext).not.toContain("ao-only policy");
+  expect(aoContext).not.toContain("Conversation Focus");
   expect(aoContext).not.toContain("aka-only policy");
-  expect(akaContext).toContain("aka-only policy");
+  expect(akaContext).not.toContain("aka-only policy");
   expect(akaContext).not.toContain("ao-only policy");
-  expect(policyInputs.sort()).toEqual(["aka", "ao"]);
-
-  const focus = await conversationAnalysisService.analyze({
-    botId: "ao",
-    threadId: "shared-thread",
-    currentContext: "元のCIの話に戻って続きを進めよう",
-  });
-  expect(focus.focus).toMatchObject({
-    currentTopic: "CIが失敗する理由は何ですか？",
-    currentTopicReason:
-      "the user explicitly returns to the CI investigation",
-    unresolvedQuestion: "CIが失敗する理由は何ですか？",
-    unresolvedQuestionReason:
-      "the cause of the CI failure has not been answered",
-    agentCommitment: "ログを確認して後で共有します。",
-    agentCommitmentReason:
-      "the assistant said it would inspect and report the logs",
-    currentTopicStatus: "active",
-    currentTopicStatusReason:
-      "the unresolved question and commitment remain active",
-  });
-  const acknowledged = await conversationAnalysisService.analyze({
-    botId: "ao",
-    threadId: "shared-thread",
-    currentContext: "了解",
-  });
-  expect(acknowledged.focus?.currentTopic).not.toBe("了解");
-  expect(acknowledged.focus?.currentTopicStatus).toBe("active");
-  expect(
-    (
-      await createFixtureAnalysis(true).analyze({
-        botId: "ao",
-        threadId: "shared-thread",
-        currentContext: "ここで区切ります",
-      })
-    ).focus,
-  ).toEqual({
-    currentTopicStatus: "complete",
-    currentTopicStatusReason:
-      "the user explicitly says the issue is resolved",
-  });
+  expect(policyInputs).toEqual([]);
 
   const proactive = longConversationFixture.find(
     (record) => record.kind === "proactive",
@@ -350,70 +496,46 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     "ao:shared-thread",
     "aka:shared-thread",
   ]);
-  expect(invocationContexts[0]).toContain("ao-only policy");
+  expect(invocationContexts[0]).not.toContain("ao-only policy");
   expect(invocationContexts[0]).not.toContain("aka-only policy");
-  expect(invocationContexts[1]).toContain("aka-only policy");
+  expect(invocationContexts[1]).not.toContain("aka-only policy");
   expect(invocationContexts[1]).not.toContain("ao-only policy");
 });
 
-test("conversation analysis excludes human turns older than its 12-record window", async () => {
-  const base = longConversationFixture.find((record) => record.kind === "human");
-  expect(base).toBeDefined();
-  const oldMusicTurn = {
-    ...base!,
-    createdAtIso: "2026-08-01T00:00:00.000Z",
-    messages: [
-      {
-        role: "user" as const,
-        content: "ジャズをよく聴く",
-        timestampIso: "2026-08-01T00:00:00.000Z",
-      },
-      {
-        role: "assistant" as const,
-        content: "覚えておきます",
-        timestampIso: "2026-08-01T00:00:00.000Z",
-      },
-    ],
-  };
-  const recentTurns = Array.from({ length: 12 }, (_, index) => ({
-    ...base!,
-    createdAtIso: `2026-09-01T00:${index.toString().padStart(2, "0")}:00.000Z`,
-    messages: [
-      {
-        role: "user" as const,
-        content: `recent topic ${index}`,
-        timestampIso: `2026-09-01T00:${index.toString().padStart(2, "0")}:00.000Z`,
-      },
-    ],
-  }));
-  let analyzerInput = "";
-  const service = createConversationAnalysisService({
-    reader: {
-      listRecentTurnRecords: async ({ limit }) =>
-        [oldMusicTurn, ...recentTurns].slice(-limit),
-    },
-    model: {
-      generateJson: async <T>(_systemPrompt: string, userPrompt: string) => {
-        analyzerInput = userPrompt;
-        return {
-          currentTopic: "recent topic 11",
-          currentTopicReason: "the latest human turn establishes it",
-          currentTopicStatus: "active",
-          currentTopicStatusReason: "the latest topic is ongoing",
-          reason: "bounded history",
-          conversationTrigger: "ineligible",
-          conversationTriggerReason: "the current topic is active",
-        } as T;
-      },
-    },
-  });
-
-  await service.analyze({
+test("Discord response discovers the catalog before retrieving old conversation and knowledge", async () => {
+  const memory = new FixtureUserMemoryStore();
+  const tools = createCustomTools({
+    knowledgeAccessService,
+    userMemoryClient: memory,
+    dailyEventClient: new FixtureDailyEvents(),
     botId: "ao",
-    threadId: "shared-thread",
-    currentContext: "続きを話そう",
+    runtimeContext: {
+      current: () => ({
+        botId: "ao",
+        userId: "user-1",
+        threadId: "channel-1:user-1",
+      }),
+    },
+  });
+  const runtime = new CatalogDrivenRuntime(tools);
+  const transport = new E2eDiscordTransport();
+  const app = new DiscordBotApp(
+    { botId: "ao", systemPrompt: "fixture" },
+    runtime,
+    transport,
+    "channel-1",
+  );
+  app.start();
+
+  await transport.emit({
+    channelId: "channel-1",
+    authorId: "user-1",
+    content: "前に話した音楽と関連する保存記事を教えて",
+    mentionsBot: true,
   });
 
-  expect(analyzerInput).toContain("recent topic 11");
-  expect(analyzerInput).not.toContain("ジャズをよく聴く");
+  expect(transport.sent[0]).toContain("ジャズをよく聴く");
+  expect(transport.sent[0]).toContain("ジャズ即興入門");
+  expect(runtime.requests[0]?.requestContext).toBeUndefined();
+  expect(JSON.stringify(runtime.requests)).not.toContain("secret raw source payload");
 });

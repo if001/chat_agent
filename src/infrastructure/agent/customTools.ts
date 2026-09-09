@@ -1,12 +1,8 @@
 import { tool } from "@langchain/core/tools";
 import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import { z } from "zod/v3";
-import {
-  DailyEventRepository,
-  UserMemoryStore,
-} from "../../core/types";
 import { TrustedAgentContext } from "./runtimeContext";
-import { UserMemoryWritePlanner } from "../memory/userMemoryWritePlanner";
+import { MemorySystemClient } from "../memory/memorySystemClient";
 
 interface TrustedContextReader {
   current(): TrustedAgentContext;
@@ -14,9 +10,19 @@ interface TrustedContextReader {
 
 export interface CustomToolDeps {
   knowledgeAccessService: KnowledgeAccessService;
-  userMemoryStore: UserMemoryStore;
-  userMemoryWritePlanner: UserMemoryWritePlanner;
-  dailyEventRepository?: DailyEventRepository;
+  userMemoryClient: Pick<
+    MemorySystemClient,
+    | "rememberUserNote"
+    | "searchUserNotes"
+    | "replaceUserNote"
+    | "deleteUserNote"
+    | "inspectCatalog"
+    | "searchMemory"
+  >;
+  dailyEventClient?: Pick<
+    MemorySystemClient,
+    "rememberDailyEvent" | "searchDailyEvents" | "getDailyEventsByDate"
+  >;
   botId: string;
   runtimeContext: TrustedContextReader;
   enqueueTask?: (input: {
@@ -31,12 +37,151 @@ export interface CustomToolDeps {
 const schemaCompat = <T>(schema: T): T => schema;
 
 export const createCustomTools = (deps: CustomToolDeps) => {
-  const requireDailyEventRepository = (): DailyEventRepository => {
-    if (!deps.dailyEventRepository) {
+  const requireDailyEventClient = () => {
+    if (!deps.dailyEventClient) {
       throw new Error("daily event backend is not configured");
     }
-    return deps.dailyEventRepository;
+    return deps.dailyEventClient;
   };
+
+  const trustedScope = () => {
+    const context = deps.runtimeContext.current();
+    return {
+      botId: context.botId,
+      threadId: context.threadId,
+      userId: context.userId,
+    };
+  };
+
+  const searchMemory = async (
+    input: Parameters<MemorySystemClient["searchMemory"]>[0],
+    resultKey: "conversationHistory" | "userMemory" | "policyCards",
+  ) => {
+    try {
+      const result = await retryTransient(() =>
+        deps.userMemoryClient.searchMemory(input),
+      );
+      return result[resultKey] ?? {
+        status: "unavailable",
+        reason: `${resultKey} result was omitted`,
+      };
+    } catch {
+      return {
+        status: "unavailable",
+        reason: "Memory search failed",
+      };
+    }
+  };
+
+  const inspectContextCatalogTool = tool(
+    async ({ query }: { query?: string }) => {
+      const scope = trustedScope();
+      const [memory, knowledge] = await Promise.all([
+        loadCatalog(
+          () =>
+            deps.userMemoryClient.inspectCatalog({
+              ...scope,
+              ...(query?.trim() ? { query: query.trim() } : {}),
+            }),
+          "memory catalog",
+        ),
+        loadCatalog(
+          () => deps.knowledgeAccessService.inspectCatalog(),
+          "knowledge catalog",
+        ),
+      ]);
+      return JSON.stringify({
+        memory: sanitizeCatalogReasons(memory, "memory catalog"),
+        knowledge: sanitizeCatalogReasons(knowledge, "knowledge catalog"),
+      });
+    },
+    {
+      name: "inspect_context_catalog",
+      description:
+        "Lists lightweight topic hints for available memories and saved knowledge. Use it before detailed retrieval when past context may matter; it does not return memory bodies.",
+      schema: schemaCompat(
+        z.object({ query: z.string().max(500).optional() }),
+      ) as never,
+    },
+  );
+
+  const searchConversationMemoryTool = tool(
+    async ({ query, limit }: { query: string; limit?: number }) => {
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["conversation_history"],
+          limits: { conversation_history: limit ?? 5 },
+        },
+        "conversationHistory",
+      );
+      return JSON.stringify(result);
+    },
+    {
+      name: "search_conversation_memory",
+      description:
+        "Searches older related conversation excerpts after catalog inspection. Runtime identity scope is applied automatically.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().min(1).max(500),
+          limit: z.number().int().min(1).max(10).default(5),
+        }),
+      ) as never,
+    },
+  );
+
+  const searchUserMemoryTool = tool(
+    async ({ query, limit }: { query: string; limit?: number }) => {
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["user_memory"],
+          limits: { user_memory: limit ?? 5 },
+        },
+        "userMemory",
+      );
+      return JSON.stringify(result);
+    },
+    {
+      name: "search_user_memory",
+      description:
+        "Searches durable user preferences, constraints, attributes, and ongoing assumptions. Runtime user scope is automatic.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().min(1).max(500),
+          limit: z.number().int().min(1).max(10).default(5),
+        }),
+      ) as never,
+    },
+  );
+
+  const searchResponsePoliciesTool = tool(
+    async ({ query, limit }: { query: string; limit?: number }) => {
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["policy_cards"],
+          limits: { policy_cards: Math.min(limit ?? 3, 3) },
+        },
+        "policyCards",
+      );
+      return JSON.stringify(result);
+    },
+    {
+      name: "search_response_policies",
+      description:
+        "Searches bot-specific procedural response guidance. Runtime bot and thread scope is automatic.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().min(1).max(500),
+          limit: z.number().int().min(1).max(3).default(3),
+        }),
+      ) as never,
+    },
+  );
 
   const webListTool = tool(
     async ({ query, k }: { query: string; k: number }) => {
@@ -77,7 +222,12 @@ export const createCustomTools = (deps: CustomToolDeps) => {
         ...(limit ? { limit } : {}),
         ...(minScore !== undefined ? { minScore } : {}),
       }));
-      return JSON.stringify(results.map(({ score: _score, ...item }) => item));
+      return JSON.stringify(
+        results.map(({ score, ...item }) => {
+          void score;
+          return item;
+        }),
+      );
     },
     {
       name: "search_saved_knowledge",
@@ -91,7 +241,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const getSavedArticleTool = tool(
-    async ({ articleId, url, detail }: { articleId?: string; url?: string; detail?: "summary" | "content" | "raw" }) => {
+    async ({ articleId, url, detail }: { articleId?: string; url?: string; detail?: "summary" | "content" }) => {
       if (!articleId && !url) {
         return JSON.stringify({ error: "articleId or url is required" });
       }
@@ -101,9 +251,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       }));
       if (!article) {
         return JSON.stringify(null);
-      }
-      if (detail === "raw") {
-        return JSON.stringify(article);
       }
       const base = {
         id: article.id,
@@ -123,7 +270,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       schema: schemaCompat(z.object({
         articleId: z.string().optional(),
         url: z.string().url().optional(),
-        detail: z.enum(["summary", "content", "raw"]).default("summary"),
+        detail: z.enum(["summary", "content"]).default("summary"),
       })) as never,
     },
   );
@@ -153,8 +300,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   const rememberUserNoteTool = tool(
     async ({ note }: { note: string }) => {
       return JSON.stringify(
-        await executeUserMemoryWrite(
-          deps,
+        await deps.userMemoryClient.rememberUserNote(
           deps.runtimeContext.current().userId,
           note,
         ),
@@ -171,7 +317,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const searchUserNotesTool = tool(
     async ({ query, limit }: { query: string; limit?: number }) => {
-      const results = await deps.userMemoryStore.searchUserNotes(
+      const results = await deps.userMemoryClient.searchUserNotes(
         deps.runtimeContext.current().userId,
         query,
         limit ?? 5,
@@ -191,11 +337,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   const replaceUserNoteTool = tool(
     async ({ noteId, note }: { noteId: number; note: string }) => {
       return JSON.stringify(
-        await executeUserMemoryWrite(
-          deps,
+        await deps.userMemoryClient.replaceUserNote(
           deps.runtimeContext.current().userId,
-          note,
           noteId,
+          note,
         ),
       );
     },
@@ -211,7 +356,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const deleteUserNoteTool = tool(
     async ({ noteId }: { noteId: number }) => {
-      const deleted = await deps.userMemoryStore.deleteUserNote(
+      const deleted = await deps.userMemoryClient.deleteUserNote(
         deps.runtimeContext.current().userId,
         noteId,
       );
@@ -233,8 +378,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       tags?: string[];
       sourceMessage?: string;
     }) => {
-      const dailyEventRepository = requireDailyEventRepository();
-      const saved = await dailyEventRepository.rememberDailyEvent({
+      const dailyEventClient = requireDailyEventClient();
+      const saved = await dailyEventClient.rememberDailyEvent({
         userId: deps.runtimeContext.current().userId,
         eventDate,
         summary,
@@ -262,15 +407,35 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       fromDate?: string;
       toDate?: string;
     }) => {
-      const dailyEventRepository = requireDailyEventRepository();
-      const results = await dailyEventRepository.searchDailyEvents({
-        userId: deps.runtimeContext.current().userId,
-        query,
-        ...(limit ? { limit } : {}),
-        ...(fromDate ? { fromDate } : {}),
-        ...(toDate ? { toDate } : {}),
-      });
-      return JSON.stringify(results);
+      const dailyEventClient = requireDailyEventClient();
+      try {
+        const results = await retryTransient(() =>
+          dailyEventClient.searchDailyEvents({
+            userId: deps.runtimeContext.current().userId,
+            query,
+            limit: Math.min(limit ?? 5, 10),
+            ...(fromDate ? { from: fromDate } : {}),
+            ...(toDate ? { to: toDate } : {}),
+          }),
+        );
+        return JSON.stringify(
+          results.length > 0
+            ? {
+                status: "found",
+                data: results.slice(0, 10).map((event) => ({
+                  eventId: event.id,
+                  eventDate: event.eventDate,
+                  summary: event.summary,
+                })),
+              }
+            : { status: "not_found" },
+        );
+      } catch {
+        return JSON.stringify({
+          status: "unavailable",
+          reason: "DailyEvent search failed",
+        });
+      }
     },
     {
       name: "search_daily_events",
@@ -290,8 +455,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       windowDays?: number;
       limit?: number;
     }) => {
-      const dailyEventRepository = requireDailyEventRepository();
-      const results = await dailyEventRepository.getDailyEventsByDate({
+      const dailyEventClient = requireDailyEventClient();
+      const results = await dailyEventClient.getDailyEventsByDate({
         userId: deps.runtimeContext.current().userId,
         date,
         ...(windowDays !== undefined ? { windowDays } : {}),
@@ -358,6 +523,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   return [
+    inspectContextCatalogTool,
+    searchConversationMemoryTool,
+    searchUserMemoryTool,
+    searchResponsePoliciesTool,
     webListTool,
     webPageTool,
     saveWebKnowledgeTool,
@@ -375,138 +544,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   ];
 };
 
-const executeUserMemoryWrite = async (
-  deps: Pick<
-    CustomToolDeps,
-    "userMemoryStore" | "userMemoryWritePlanner"
-  >,
-  userId: string,
-  proposedNote: string,
-  explicitTargetNoteId?: number,
-) => {
-  const [partialMatches, recentNotes] = await Promise.all([
-    deps.userMemoryStore.searchUserNotes(userId, proposedNote.trim(), 12),
-    deps.userMemoryStore.searchUserNotes(userId, "", 24),
-  ]);
-  const candidates = mergeUserNoteCandidates(
-    partialMatches,
-    recentNotes,
-    explicitTargetNoteId,
-  );
-  if (
-    explicitTargetNoteId !== undefined &&
-    !candidates.some((candidate) => candidate.id === explicitTargetNoteId)
-  ) {
-    return { ok: false, error: "The requested UserMemory note ID was not found." };
-  }
-  const decision = await deps.userMemoryWritePlanner.decide({
-    proposedNote,
-    candidates,
-    ...(explicitTargetNoteId !== undefined ? { explicitTargetNoteId } : {}),
-  });
-  if (!decision) {
-    return { ok: false, error: "UserMemory write decision was invalid." };
-  }
-  if (decision.destination !== "user_memory") {
-    return rejectedMemoryDestination(decision.destination, decision.reason);
-  }
-  if (decision.action === "create") {
-    const note = await deps.userMemoryStore.rememberUserNote(
-      userId,
-      proposedNote,
-    );
-    return { ok: true, action: decision.action, reason: decision.reason, note };
-  }
-  const target = candidates.find(
-    (candidate) => candidate.id === decision.targetNoteId,
-  );
-  if (!target) {
-    return { ok: false, error: "UserMemory write target was not found." };
-  }
-  if (decision.action === "keep_existing") {
-    return {
-      ok: true,
-      action: decision.action,
-      reason: decision.reason,
-      note: target,
-    };
-  }
-  if (decision.action === "replace") {
-    const note = await deps.userMemoryStore.replaceUserNote(
-      userId,
-      target.id,
-      proposedNote,
-    );
-    return {
-      ok: note !== null,
-      action: decision.action,
-      reason: decision.reason,
-      note,
-    };
-  }
-  const deleted = await deps.userMemoryStore.deleteUserNote(userId, target.id);
-  return {
-    ok: deleted,
-    action: decision.action,
-    reason: decision.reason,
-    deletedNoteId: target.id,
-  };
-};
-
-const rejectedMemoryDestination = (
-  destination: "daily_event" | "topic_state" | "reject",
-  reason: string,
-) => {
-  if (destination === "daily_event") {
-    return {
-      ok: false,
-      destination,
-      reason,
-      error:
-        "Use remember_daily_event with an explicit eventDate; content is not stored automatically.",
-    };
-  }
-  if (destination === "topic_state") {
-    return {
-      ok: false,
-      destination,
-      reason,
-      error:
-        "TopicState is updated only by the proactive reaction observation path.",
-    };
-  }
-  return {
-    ok: false,
-    destination,
-    reason,
-    error: "Content is not suitable for automatic memory storage.",
-  };
-};
-
-const mergeUserNoteCandidates = (
-  partialMatches: Awaited<ReturnType<UserMemoryStore["searchUserNotes"]>>,
-  recentNotes: Awaited<ReturnType<UserMemoryStore["searchUserNotes"]>>,
-  explicitTargetNoteId?: number,
-) => {
-  const ordered = [...partialMatches, ...recentNotes];
-  const unique = ordered.filter(
-    (candidate, index) =>
-      ordered.findIndex((item) => item.id === candidate.id) === index,
-  );
-  if (explicitTargetNoteId === undefined) {
-    return unique.slice(0, 24);
-  }
-  const explicit = unique.find(
-    (candidate) => candidate.id === explicitTargetNoteId,
-  );
-  return explicit
-    ? [explicit, ...unique.filter((candidate) => candidate.id !== explicit.id)].slice(
-        0,
-        24,
-      )
-    : unique.slice(0, 24);
-};
-
 const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {
   try {
     return await operation();
@@ -518,9 +555,42 @@ const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {
   }
 };
 
+const loadCatalog = async <T>(
+  load: () => Promise<T>,
+  label: string,
+): Promise<
+  | T
+  | {
+      status: "unavailable";
+      available: false;
+      topics: never[];
+      reason: string;
+    }
+> => {
+  try {
+    return await load();
+  } catch {
+    return {
+      status: "unavailable",
+      available: false,
+      topics: [],
+      reason: `${label} failed`,
+    };
+  }
+};
+
 const isTransientError = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error);
   return /(timeout|timed out|ECONNRESET|ECONNREFUSED|EAI_AGAIN|502|503|504)/i.test(
     message,
   );
 };
+
+const sanitizeCatalogReasons = <T>(value: T, label: string): T =>
+  JSON.parse(
+    JSON.stringify(value, (key, item: unknown) =>
+      key === "reason" && typeof item === "string"
+        ? `${label} unavailable`
+        : item,
+    ),
+  ) as T;

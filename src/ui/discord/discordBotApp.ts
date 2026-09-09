@@ -5,14 +5,16 @@ import {
   QueueApi,
   QueueTask,
 } from "@chat-agent/queue";
-import { handleMention } from "../../core/usecases/handleMention";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
+import type { ConversationOpportunityAssessment } from "@chat-agent/simple-pomdp-system";
 import {
-  ConversationAnalysis,
-  ConversationFocus,
-} from "../../infrastructure/agent/conversationFocus";
+  ResponseInputEnvelope,
+  responseInputEnvelopeFromQueueTask,
+  responseInputTurnRecord,
+  runResponseInput,
+} from "../../core/responseInputEnvelope";
 
 export interface ConversationTopicPlan {
   text: string;
@@ -46,18 +48,18 @@ export class DiscordBotApp {
       currentContext: string;
       kind: "human" | "conversation" | "proactive" | "delegation";
       proactiveEvidence?: string;
-      conversationFocus?: ConversationFocus | null;
     }) => Promise<string | undefined>,
     private readonly resolveConversationTopic?: (input: {
       botId: string;
       threadId: string;
       userId: string;
     }) => Promise<ConversationTopicPlan | null>,
-    private readonly resolveConversationAnalysis?: (input: {
+    private readonly resolveConversationOpportunity?: (input: {
       botId: string;
       threadId: string;
+      userId: string;
       currentContext: string;
-    }) => Promise<ConversationAnalysis>,
+    }) => Promise<ConversationOpportunityAssessment>,
     private readonly resolvePendingInteraction?: (input: {
       botId: string;
       threadId: string;
@@ -126,12 +128,10 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
-      const conversationAnalysis = await this.analyzeConversation(task);
       const pendingInteractionId = await this.findPendingInteraction(task);
       const conversationTopic = await this.planConversationTopic(
         task,
         pendingInteractionId,
-        conversationAnalysis,
       );
       const requestContext = await this.buildRequestContext(
         task.userId,
@@ -139,37 +139,15 @@ export class DiscordBotApp {
         task.text,
         conversationTopic ? "conversation" : "human",
         conversationTopic?.text,
-        conversationAnalysis.focus,
       );
-      const mentionReply = await handleMention(
-        this.identity,
-        this.runtime,
-        {
-          channelId: task.channelId,
-          authorId: task.userId,
-          content: task.text,
-          mentionsBot: task.mentionsBot,
-        },
-        requestContext,
-      );
-      if (mentionReply) {
-        if (!(await this.isCurrentConversationVersion(task))) {
-          this.logInfo(
-            `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
-          );
-          return;
-        }
-        await this.transport.sendMessage(task.channelId, mentionReply);
-        await this.recordTurn(
-          task,
-          mentionReply,
-          conversationTopic?.sourceInteractionId,
+      const envelope = responseInputEnvelopeFromQueueTask(
+        this.identity.botId,
+        task,
+        conversationTopic?.sourceInteractionId ??
+          task.sourceInteractionId ??
           pendingInteractionId,
-        );
-        this.logInfo(`replied id=${task.id} action=mention`);
-      } else {
-        this.logError(`no_reply id=${task.id} action=mention`);
-      }
+      );
+      await this.executeResponse(task, envelope, requestContext);
       return;
     }
 
@@ -183,28 +161,39 @@ export class DiscordBotApp {
         "proactive",
         task.text,
       );
-      const result = await this.runtime.respond({
-        botId: this.identity.botId,
-        userId: task.userId,
-        systemPrompt: this.identity.systemPrompt,
-        ...(requestContext ? { requestContext } : {}),
-        threadId,
-        messages: [{ role: "user", content: task.text }],
-      });
-      if (result.content.length > 0) {
-        if (!(await this.isCurrentConversationVersion(task))) {
-          this.logInfo(
-            `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
-          );
-          return;
-        }
-        await this.transport.sendMessage(task.channelId, result.content);
-        await this.recordTurn(task, result.content);
-        this.logInfo(`replied id=${task.id} action=agent_input`);
-      } else {
-        this.logError(`no_reply id=${task.id} action=agent_input`);
-      }
+      const envelope = responseInputEnvelopeFromQueueTask(
+        this.identity.botId,
+        task,
+        task.sourceInteractionId,
+      );
+      await this.executeResponse(task, envelope, requestContext);
     }
+  }
+
+  private async executeResponse(
+    task: QueueTask,
+    envelope: ResponseInputEnvelope,
+    requestContext?: string,
+  ): Promise<void> {
+    const content = await runResponseInput(
+      this.identity,
+      this.runtime,
+      envelope,
+      requestContext,
+    );
+    if (content.length === 0) {
+      this.logError(`no_reply id=${task.id} action=${task.action}`);
+      return;
+    }
+    if (!(await this.isCurrentConversationVersion(task))) {
+      this.logInfo(
+        `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
+      );
+      return;
+    }
+    await this.transport.sendMessage(envelope.channelId, content);
+    await this.recordTurn(envelope, content);
+    this.logInfo(`replied id=${task.id} action=${task.action}`);
   }
 
   private sendTypingBestEffort(channelId: string): void {
@@ -231,39 +220,17 @@ export class DiscordBotApp {
   }
 
   private async recordTurn(
-    task: QueueTask,
+    envelope: ResponseInputEnvelope,
     assistantContent: string,
-    conversationInteractionId?: string,
-    pendingInteractionId?: string | null,
   ): Promise<void> {
     if (!this.onTurnRecorded) {
       return;
     }
     const timestamp = new Date().toISOString();
-    const sourceInteractionId =
-      task.source === "user"
-        ? (conversationInteractionId ??
-          task.sourceInteractionId ??
-          pendingInteractionId)
-        : task.sourceInteractionId;
     try {
-      await this.onTurnRecorded({
-        botId: this.identity.botId,
-        threadId: task.targetThreadId,
-        kind: task.source === "user" ? "human" : "proactive",
-        ...(sourceInteractionId
-          ? { sourceInteractionId }
-          : {}),
-        messages: [
-          { role: "user", content: task.text, timestampIso: timestamp },
-          {
-            role: "assistant",
-            content: assistantContent,
-            timestampIso: timestamp,
-          },
-        ],
-        createdAtIso: timestamp,
-      });
+      await this.onTurnRecorded(
+        responseInputTurnRecord(envelope, assistantContent, timestamp),
+      );
     } catch (error: unknown) {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
@@ -274,19 +241,24 @@ export class DiscordBotApp {
   private async planConversationTopic(
     task: MentionQueueTask,
     pendingInteractionId: string | null,
-    conversationAnalysis: ConversationAnalysis,
   ): Promise<ConversationTopicPlan | null> {
     if (
       !this.resolveConversationTopic ||
-      pendingInteractionId !== null ||
-      conversationAnalysis.conversationTrigger !== "eligible"
+      !this.resolveConversationOpportunity ||
+      pendingInteractionId !== null
     ) {
       return null;
     }
     try {
-      if (conversationAnalysis.focus?.currentTopicStatus === "active") {
+      const opportunity = await this.resolveConversationOpportunity({
+        botId: this.identity.botId,
+        threadId: task.targetThreadId,
+        userId: task.userId,
+        currentContext: task.text,
+      });
+      if (opportunity.kind === "skip") {
         this.logInfo(
-          `conversation topic skipped threadId=${task.targetThreadId} reason=active_focus`,
+          `conversation topic skipped threadId=${task.targetThreadId} reason=${opportunity.reason}`,
         );
         return null;
       }
@@ -302,38 +274,6 @@ export class DiscordBotApp {
         `[simple-pomdp-error] conversation trigger failed: ${message}\n`,
       );
       return null;
-    }
-  }
-
-  private async analyzeConversation(
-    task: MentionQueueTask,
-  ): Promise<ConversationAnalysis> {
-    if (!this.resolveConversationAnalysis) {
-      return {
-        focus: null,
-        reason: "conversation analyzer is not configured",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: "conversation analyzer is not configured",
-      };
-    }
-    try {
-      return await this.resolveConversationAnalysis({
-        botId: this.identity.botId,
-        threadId: task.targetThreadId,
-        currentContext: task.text,
-      });
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? (error.stack ?? error.message) : String(error);
-      process.stdout.write(
-        `[conversation-analysis-error] analysis failed: ${message}\n`,
-      );
-      return {
-        focus: null,
-        reason: "conversation analysis failed",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: "conversation analysis failed",
-      };
     }
   }
 
@@ -365,7 +305,6 @@ export class DiscordBotApp {
     currentContext: string,
     kind: "human" | "conversation" | "proactive" | "delegation",
     proactiveEvidence?: string,
-    conversationFocus?: ConversationFocus | null,
   ): Promise<string | undefined> {
     if (!this.resolveRequestContext) {
       return proactiveEvidence
@@ -380,7 +319,6 @@ export class DiscordBotApp {
         currentContext,
         kind,
         ...(proactiveEvidence ? { proactiveEvidence } : {}),
-        ...(conversationFocus !== undefined ? { conversationFocus } : {}),
       });
     } catch (error: unknown) {
       const message =

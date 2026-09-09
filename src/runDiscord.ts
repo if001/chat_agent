@@ -17,13 +17,10 @@ import {
   createOllamaChatModel,
   createOllamaChatModelCloud,
 } from "./infrastructure/agent/ollamaChatModel";
-import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
-import { createUserMemoryWritePlanner } from "./infrastructure/memory/userMemoryWritePlanner";
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
-import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
-import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
+import { createCheckpointSummarizationMiddleware } from "./infrastructure/agent/checkpointSummarization";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
@@ -39,15 +36,14 @@ import {
   createFileTopicStateStore,
   createPendingInteractionResolver,
   createOllamaDialoguePlanningModel,
+  createMemoryServiceContextSource,
   createSavedKnowledgeContextSource,
   createSimplePomdpSystemService,
   createTopicStateInteractionLogContextSource,
-  createUserMemoryContextSource,
   loadInitialDomainCandidates,
 } from "@chat-agent/simple-pomdp-system";
 
 const main = async (): Promise<void> => {
-  console.log("start!");
   const deepagents = await import("deepagents");
   const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
     model: unknown;
@@ -57,6 +53,7 @@ const main = async (): Promise<void> => {
     store?: unknown;
     backend?: unknown;
     skills?: string[];
+    middleware?: unknown[];
   }) => {
     invoke(
       input: {
@@ -85,6 +82,14 @@ const main = async (): Promise<void> => {
         env.ollamaApiKey,
       )
     : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
+  const checkpointSummarizationMiddleware =
+    createCheckpointSummarizationMiddleware({
+      model: chatModel,
+      contextWindowTokens: env.deepAgentContextWindowTokens,
+      triggerFraction: env.deepAgentSummarizationTriggerFraction,
+      recentInteractions: env.deepAgentRecentInteractions,
+      toolResultMaxChars: env.deepAgentToolResultMaxChars,
+    });
 
   const pool = createPostgresPool(env.postgresUrl);
   const db = createDrizzleClient(pool);
@@ -94,8 +99,12 @@ const main = async (): Promise<void> => {
   );
   const repository = new PostgresKnowledgeRepository(db, embeddingProvider);
 
-  const userMemoryStore = new PostgresUserMemoryStore(db);
-  const dailyEventRepository = new PostgresDailyEventRepository(db);
+  const memoryClient = createMemorySystemClient({
+    postgresUrl: env.postgresUrl,
+    ollamaBaseUrl: env.ollamaBaseUrl,
+    ollamaModel: env.ollamaChatModel,
+    ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
+  });
 
   const checkpointer = PostgresSaver.fromConnString(env.postgresUrl, {
     schema: "app",
@@ -132,15 +141,8 @@ const main = async (): Promise<void> => {
   const runtimeContext = new AgentRuntimeContext();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryStore,
-    userMemoryWritePlanner: createUserMemoryWritePlanner(
-      createOllamaDialoguePlanningModel(
-        env.ollamaBaseUrl,
-        env.ollamaChatModel,
-        env.ollamaApiKey,
-      ),
-    ),
-    dailyEventRepository,
+    userMemoryClient: memoryClient,
+    dailyEventClient: memoryClient,
     botId: identity.botId,
     runtimeContext,
     enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
@@ -181,6 +183,7 @@ const main = async (): Promise<void> => {
         ...(st ? { store: st } : {}),
         backend: new deepagents.FilesystemBackend({ rootDir: process.cwd() }),
         skills: env.deepAgentSkillsSources,
+        middleware: [checkpointSummarizationMiddleware],
       }),
     () => store,
     () => checkpointer,
@@ -198,12 +201,6 @@ const main = async (): Promise<void> => {
     discordClient,
     env.allowedBotUserIds,
   );
-  const memoryClient = createMemorySystemClient({
-    postgresUrl: env.postgresUrl,
-    ollamaBaseUrl: env.ollamaBaseUrl,
-    ollamaModel: env.ollamaChatModel,
-    ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
-  });
   const turnRecordReader = createPostgresTurnRecordReader(env.postgresUrl);
   const topicStateStore = createFileTopicStateStore({
     baseDir: join(env.simplePomdpStoreDir, "topic-states"),
@@ -216,15 +213,9 @@ const main = async (): Promise<void> => {
     topicStateStore,
     interactionLogStore,
     contextSources: [
-      createUserMemoryContextSource({
-        reader: {
-          listRecentUserMemory: async ({ userId, limit }) =>
-            (await userMemoryStore.searchUserNotes(userId, "", limit)).map(
-              (note) => ({
-                text: note.note,
-                createdAtIso: note.createdAt.toISOString(),
-              }),
-            ),
+      createMemoryServiceContextSource({
+        memoryService: {
+          search: (input) => memoryClient.searchMemory(input),
         },
       }),
       createSavedKnowledgeContextSource({
@@ -248,27 +239,20 @@ const main = async (): Promise<void> => {
       ),
     ),
   });
-  const conversationAnalysisService = createConversationAnalysisService({
-    reader: turnRecordReader,
-    model: createOllamaDialoguePlanningModel(
-      env.ollamaBaseUrl,
-      env.ollamaChatModel,
-      env.ollamaApiKey,
-    ),
-  });
   const pendingInteractionResolver = createPendingInteractionResolver({
     turnRecordReader,
     interactionLogStore,
   });
   const requestContextBuilder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
+    memoryClient,
+    memoryClient,
     {
-      load: async ({ botId, threadId, currentContext }) => {
-        const cards = await memoryClient.queryApplicablePolicyCards({
+      load: async ({ botId, threadId, userId, currentContext }) => {
+        const cards = await memoryClient.searchPolicyCards({
           botId,
           threadId,
-          currentContext,
+          userId,
+          query: currentContext,
           limit: 3,
         });
         return cards.length > 0
@@ -277,21 +261,6 @@ const main = async (): Promise<void> => {
       },
     },
     undefined,
-    conversationAnalysisService,
-    {
-      searchRelevant: async ({ query, limit }) =>
-        (await knowledgeAccessService.searchSavedKnowledge({
-          query,
-          limit,
-          minScore: 0.35,
-        })).map(({ articleId, title, summary, tags, url }) => ({
-          articleId,
-          title,
-          summary,
-          tags,
-          url,
-        })),
-    },
   );
   const app = new DiscordBotApp(
     identity,
@@ -303,13 +272,13 @@ const main = async (): Promise<void> => {
     createTurnRecorder(memoryClient),
     (input) => requestContextBuilder.build(input),
     async ({ botId, threadId, userId }) =>
-      conversationPlanner.runTrigger({
+      conversationPlanner.planInteraction({
         botId,
         threadId,
         userId,
         trigger: "conversation",
       }),
-    (input) => conversationAnalysisService.analyze(input),
+    (input) => conversationPlanner.assessConversationOpportunity(input),
     (input) => pendingInteractionResolver.resolve(input),
   );
   app.start();
@@ -320,6 +289,6 @@ const main = async (): Promise<void> => {
 main().catch((error: unknown) => {
   const message =
     error instanceof Error ? (error.stack ?? error.message) : String(error);
-  process.stdout.write(`${message}\n`);
+  process.stdout.write(`[discord-startup-error] ${message}\n`);
   process.exit(1);
 });
