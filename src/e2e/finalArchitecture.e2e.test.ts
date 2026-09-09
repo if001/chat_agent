@@ -355,3 +355,65 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
   expect(invocationContexts[1]).toContain("aka-only policy");
   expect(invocationContexts[1]).not.toContain("ao-only policy");
 });
+
+test("conversation analysis excludes human turns older than its 12-record window", async () => {
+  const base = longConversationFixture.find((record) => record.kind === "human");
+  expect(base).toBeDefined();
+  const oldMusicTurn = {
+    ...base!,
+    createdAtIso: "2026-08-01T00:00:00.000Z",
+    messages: [
+      {
+        role: "user" as const,
+        content: "ジャズをよく聴く",
+        timestampIso: "2026-08-01T00:00:00.000Z",
+      },
+      {
+        role: "assistant" as const,
+        content: "覚えておきます",
+        timestampIso: "2026-08-01T00:00:00.000Z",
+      },
+    ],
+  };
+  const recentTurns = Array.from({ length: 12 }, (_, index) => ({
+    ...base!,
+    createdAtIso: `2026-09-01T00:${index.toString().padStart(2, "0")}:00.000Z`,
+    messages: [
+      {
+        role: "user" as const,
+        content: `recent topic ${index}`,
+        timestampIso: `2026-09-01T00:${index.toString().padStart(2, "0")}:00.000Z`,
+      },
+    ],
+  }));
+  let analyzerInput = "";
+  const service = createConversationAnalysisService({
+    reader: {
+      listRecentTurnRecords: async ({ limit }) =>
+        [oldMusicTurn, ...recentTurns].slice(-limit),
+    },
+    model: {
+      generateJson: async <T>(_systemPrompt: string, userPrompt: string) => {
+        analyzerInput = userPrompt;
+        return {
+          currentTopic: "recent topic 11",
+          currentTopicReason: "the latest human turn establishes it",
+          currentTopicStatus: "active",
+          currentTopicStatusReason: "the latest topic is ongoing",
+          reason: "bounded history",
+          conversationTrigger: "ineligible",
+          conversationTriggerReason: "the current topic is active",
+        } as T;
+      },
+    },
+  });
+
+  await service.analyze({
+    botId: "ao",
+    threadId: "shared-thread",
+    currentContext: "続きを話そう",
+  });
+
+  expect(analyzerInput).toContain("recent topic 11");
+  expect(analyzerInput).not.toContain("ジャズをよく聴く");
+});

@@ -1,6 +1,11 @@
 import { QueueApi, QueueTask } from "@chat-agent/queue";
 import { DiscordBotApp, DiscordTransport } from "./discordBotApp";
-import { AgentRuntime, BotIdentity, ChannelMessage } from "../../core/types";
+import {
+  AgentRequest,
+  AgentRuntime,
+  BotIdentity,
+  ChannelMessage,
+} from "../../core/types";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
 import type { ConversationFocus } from "../../infrastructure/agent/conversationFocus";
 
@@ -61,6 +66,22 @@ class RuntimeStub implements AgentRuntime {
     }
     this.finished.push(content);
     return { content: `bot response: ${content}` };
+  }
+}
+
+class CheckpointCharacterizationRuntime implements AgentRuntime {
+  private readonly previousInputByThread = new Map<string, string>();
+
+  async respond(request: AgentRequest): Promise<{ content: string }> {
+    const key = `${request.botId}:${request.threadId}`;
+    const previous = this.previousInputByThread.get(key);
+    const current = request.messages.at(-1)?.content ?? "";
+    this.previousInputByThread.set(key, current);
+    return {
+      content: previous
+        ? `直前の会話state: ${previous}`
+        : "会話stateへ保存しました",
+    };
   }
 }
 
@@ -168,6 +189,34 @@ test("records each visible turn once during a multi-turn conversation", async ()
     { threadId: "mention-channel:user-1", kind: "human", messages: [{ role: "user", content: formatUserMessage("first") }, { role: "assistant", content: "bot response: " + formatUserMessage("first") }] },
     { threadId: "mention-channel:user-1", kind: "human", messages: [{ role: "user", content: formatUserMessage("second") }, { role: "assistant", content: "bot response: " + formatUserMessage("second") }] },
   ]);
+});
+
+test("second Discord response can use prior checkpoint state for the same bot and thread", async () => {
+  const transport = new TransportStub();
+  const runtime = new CheckpointCharacterizationRuntime();
+  const app = new DiscordBotApp(
+    identity,
+    runtime,
+    transport,
+    "mention-channel",
+  );
+
+  app.start();
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "ジャズをよく聴く",
+    mentionsBot: true,
+  });
+  await transport.emit({
+    channelId: "mention-channel",
+    authorId: "user-1",
+    content: "さっき何を話した？",
+    mentionsBot: true,
+  });
+
+  expect(transport.sent).toHaveLength(2);
+  expect(transport.sent[1]?.content).toContain("ジャズをよく聴く");
 });
 
 test("still replies when turn recording fails", async () => {
@@ -363,7 +412,14 @@ test("injects memory policy context for scheduled agent input", async () => {
   expect(runtime.requestContexts[0]).toContain("scheduled policy");
   expect(runtime.userIds[0]).toBe("user-1");
   expect(transport.sent[0]?.content).toBe("bot response: scheduled check-in");
-  expect(records[0]).toMatchObject({ kind: "proactive", sourceInteractionId: "interaction-1" });
+  expect(records[0]).toMatchObject({
+    kind: "proactive",
+    sourceInteractionId: "interaction-1",
+    messages: [
+      { role: "user", content: "scheduled check-in" },
+      { role: "assistant", content: "bot response: scheduled check-in" },
+    ],
+  });
 
   await transport.emit({
     channelId: "mention-channel",
@@ -468,6 +524,16 @@ test("integrates a conversation topic into one reply and links its next reaction
   expect(records[0]).toMatchObject({
     kind: "human",
     sourceInteractionId: "conversation-1",
+    messages: [
+      {
+        role: "user",
+        content: formatUserMessage("設計の選択肢を比較して"),
+      },
+      {
+        role: "assistant",
+        content: `bot response: ${formatUserMessage("設計の選択肢を比較して")}`,
+      },
+    ],
   });
 
   await transport.emit({
@@ -776,6 +842,7 @@ test("discards a stale response and replans once with all newer user input", asy
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
   const contextInputs: string[] = [];
+  const records: TurnRecordInput[] = [];
   runtime.block(formatUserMessage("first"));
 
   const app = new DiscordBotApp(
@@ -785,7 +852,9 @@ test("discards a stale response and replans once with all newer user input", asy
     "mention-channel",
     undefined,
     undefined,
-    undefined,
+    async (record) => {
+      records.push(record);
+    },
     async ({ currentContext }) => {
       contextInputs.push(currentContext);
       return `focus for ${currentContext}`;
@@ -840,6 +909,14 @@ test("discards a stale response and replans once with all newer user input", asy
       content: `bot response: ${mergedInput}`,
     },
   ]);
+  expect(records).toHaveLength(1);
+  expect(records[0]).toMatchObject({
+    kind: "human",
+    messages: [
+      { role: "user", content: mergedInput },
+      { role: "assistant", content: `bot response: ${mergedInput}` },
+    ],
+  });
 });
 
 test("does not send a duplicate reply when ack fails after a successful response", async () => {
