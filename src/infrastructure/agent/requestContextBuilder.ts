@@ -25,6 +25,7 @@ export interface PolicyContextReader {
   load(input: {
     botId: string;
     threadId: string;
+    userId: string;
     currentContext: string;
   }): Promise<string | undefined>;
 }
@@ -83,6 +84,7 @@ export class RequestContextBuilder {
           this.policyContextReader.load({
             botId: input.botId,
             threadId: input.threadId,
+            userId: input.userId,
             currentContext: input.currentContext,
           }),
         undefined,

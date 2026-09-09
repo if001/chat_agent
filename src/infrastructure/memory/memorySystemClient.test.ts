@@ -6,11 +6,10 @@ import {
 test("formats policy context with explicit applicability and behaviors", () => {
   const prompt = formatPolicyCardsForPrompt([
     {
-      id: "pc-1",
+      policyCardId: "pc-1",
       appliesWhen: "User compares implementation options.",
       recommendedBehavior: "Compare tradeoffs against constraints.",
       avoidBehavior: "Do not choose before confirming constraints.",
-      episodeIds: ["ep-1"],
     },
   ]);
 
@@ -26,6 +25,59 @@ test("formats policy context with explicit applicability and behaviors", () => {
   expect(prompt).not.toContain("episodeIds");
 });
 
+test("routes PolicyCard lookup through unified memory search", async () => {
+  const calls: unknown[] = [];
+  const client = createMemorySystemClient(
+    {
+      postgresUrl: "postgres://example.invalid",
+      ollamaBaseUrl: "http://ollama.invalid",
+      ollamaModel: "stub",
+    },
+    () => ({
+      ingestTurnRecord: async () => {},
+      search: async (input) => {
+        calls.push(input);
+        return {
+          policyCards: {
+            status: "found",
+            data: [
+              {
+                policyCardId: "pc-1",
+                appliesWhen: "User compares options.",
+                recommendedBehavior: "Compare constraints.",
+              },
+            ],
+          },
+        };
+      },
+      rememberUserNote: async () => ({ ok: true }),
+      searchUserNotes: async () => [],
+      replaceUserNote: async () => ({ ok: true }),
+      deleteUserNote: async () => true,
+    }),
+  );
+
+  const cards = await client.searchPolicyCards({
+    botId: "ao",
+    threadId: "thread-1",
+    userId: "user-1",
+    query: "deployment strategy",
+    limit: 2,
+  });
+
+  expect(cards).toHaveLength(1);
+  expect(calls).toEqual([
+    {
+      botId: "ao",
+      threadId: "thread-1",
+      userId: "user-1",
+      query: "deployment strategy",
+      scopes: ["policy_cards"],
+      limits: { policy_cards: 2 },
+    },
+  ]);
+});
+
 test("routes UserMemory operations through the memory-system service", async () => {
   const calls: unknown[] = [];
   const client = createMemorySystemClient(
@@ -36,7 +88,7 @@ test("routes UserMemory operations through the memory-system service", async () 
     },
     () => ({
       ingestTurnRecord: async () => {},
-      queryApplicablePolicyCards: async () => [],
+      search: async () => ({}),
       rememberUserNote: async (input) => {
         calls.push(input);
         return { ok: true, action: "create" };

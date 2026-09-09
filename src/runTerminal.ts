@@ -95,11 +95,12 @@ const main = async (): Promise<void> => {
     memoryClient,
     memoryClient,
     {
-      load: async ({ botId, threadId, currentContext }) => {
-        const cards = await memoryClient.queryApplicablePolicyCards({
+      load: async ({ botId, threadId, userId, currentContext }) => {
+        const cards = await memoryClient.searchPolicyCards({
           botId,
           threadId,
-          currentContext,
+          userId,
+          query: currentContext,
           limit: 5,
         });
         return cards.length > 0
