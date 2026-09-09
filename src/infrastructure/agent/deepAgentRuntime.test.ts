@@ -125,3 +125,73 @@ test("separates cached agents and checkpoint thread IDs by bot", async () => {
   expect(created).toEqual(["ao personality", "aka personality"]);
   expect(threadIds).toEqual(["ao:shared-thread", "aka:shared-thread"]);
 });
+
+test("persists response origin metadata when a checkpoint thread resumes", async () => {
+  const checkpointMessages = new Map<string, unknown[]>();
+  const runtime = new DeepAgentRuntime(
+    {},
+    [],
+    () => ({
+      invoke: async (input, config) => {
+        const threadId = config.configurable.thread_id;
+        const messages = [
+          ...(checkpointMessages.get(threadId) ?? []),
+          ...input.messages,
+          { role: "assistant", content: "ok" },
+        ];
+        checkpointMessages.set(threadId, messages);
+        return { messages };
+      },
+    }),
+    () => undefined,
+    () => undefined,
+  );
+
+  await runtime.respond({
+    botId: "ao",
+    userId: "u1",
+    systemPrompt: "ao personality",
+    threadId: "thread-1",
+    messages: [
+      {
+        role: "user",
+        content: "proactive instruction",
+        additional_kwargs: {
+          response_input_origin: "proactive",
+          source_interaction_id: "interaction-1",
+        },
+      },
+    ],
+  });
+
+  await runtime.respond({
+    botId: "ao",
+    userId: "u1",
+    systemPrompt: "ao personality",
+    threadId: "thread-1",
+    messages: [
+      {
+        role: "user",
+        content: "human follow-up",
+        additional_kwargs: { response_input_origin: "human" },
+      },
+    ],
+  });
+
+  expect(checkpointMessages.get("ao:thread-1")?.slice(0, 3)).toEqual([
+    {
+      role: "user",
+      content: "proactive instruction",
+      additional_kwargs: {
+        response_input_origin: "proactive",
+        source_interaction_id: "interaction-1",
+      },
+    },
+    { role: "assistant", content: "ok" },
+    {
+      role: "user",
+      content: "human follow-up",
+      additional_kwargs: { response_input_origin: "human" },
+    },
+  ]);
+});

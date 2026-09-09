@@ -3,6 +3,7 @@ export type ChatRole = "system" | "user" | "assistant";
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  additional_kwargs?: Record<string, unknown>;
 }
 
 export interface AgentRequest {
