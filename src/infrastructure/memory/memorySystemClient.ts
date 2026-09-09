@@ -11,7 +11,7 @@ export type UserMemoryWriteResult = PackageUserMemoryWriteResult;
 type MemorySystemService = Pick<
   PackageMemorySystemService,
   | "ingestTurnRecord"
-  | "queryApplicablePolicyCards"
+  | "search"
   | "rememberUserNote"
   | "searchUserNotes"
   | "replaceUserNote"
@@ -34,19 +34,19 @@ export interface TurnRecordInput {
 }
 
 export interface MemoryPolicyCard {
-  id: string;
+  policyCardId: string;
   appliesWhen: string;
   recommendedBehavior: string;
   avoidBehavior?: string;
-  episodeIds: string[];
 }
 
 export interface MemorySystemClient {
   ingestTurnRecord(input: TurnRecordInput): Promise<void>;
-  queryApplicablePolicyCards(input: {
+  searchPolicyCards(input: {
     botId: string;
     threadId: string;
-    currentContext: string;
+    userId: string;
+    query: string;
     limit?: number;
   }): Promise<MemoryPolicyCard[]>;
   rememberUserNote(userId: string, note: string): Promise<UserMemoryWriteResult>;
@@ -118,11 +118,21 @@ export const createMemorySystemClient = (
         );
       }
     },
-    queryApplicablePolicyCards: async (input) => {
+    searchPolicyCards: async (input) => {
       if (!service) {
         return [];
       }
-      return service.queryApplicablePolicyCards(input);
+      const result = await service.search({
+        botId: input.botId,
+        threadId: input.threadId,
+        userId: input.userId,
+        query: input.query,
+        scopes: ["policy_cards"],
+        limits: { policy_cards: input.limit ?? 3 },
+      });
+      return result.policyCards?.status === "found"
+        ? result.policyCards.data
+        : [];
     },
     rememberUserNote: async (userId, note) => {
       if (!service) return { ok: false, error: "memory-system is unavailable" };
