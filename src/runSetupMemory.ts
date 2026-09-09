@@ -2,8 +2,6 @@ import { loadEnv } from "./config/env";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { OllamaEmbeddingProvider } from "@chat-agent/knowledge-access";
-import { Pool } from "pg";
-import { setupMemoryBackgroundProcessing } from "./infrastructure/memory/memoryBackgroundSchema";
 
 const main = async (): Promise<void> => {
   const env = loadEnv();
@@ -31,21 +29,12 @@ const main = async (): Promise<void> => {
   });
   await store.setup();
 
-  const pool = new Pool({ connectionString: adminPostgresUrl });
-  try {
-    await setupMemoryBackgroundProcessing(pool);
-  } finally {
-    await pool.end();
-  }
-
   process.stdout.write("memory setup completed\n");
 };
 
-if (require.main === module) {
-  void main().catch((error: unknown) => {
-    const message =
-      error instanceof Error ? (error.stack ?? error.message) : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exit(1);
-  });
-}
+main().catch((error: unknown) => {
+  const message =
+    error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+});
