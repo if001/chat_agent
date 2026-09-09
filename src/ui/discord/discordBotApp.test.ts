@@ -33,6 +33,7 @@ class RuntimeStub implements AgentRuntime {
   public readonly systemPrompts: string[] = [];
   public readonly requestContexts: Array<string | undefined> = [];
   public readonly userIds: string[] = [];
+  public readonly origins: unknown[] = [];
   private readonly blockers = new Map<string, Promise<void>>();
   private readonly releases = new Map<string, () => void>();
 
@@ -49,15 +50,13 @@ class RuntimeStub implements AgentRuntime {
     this.releases.get(content)?.();
   }
 
-  async respond(request: {
-    userId: string;
-    systemPrompt: string;
-    requestContext?: string;
-    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
-  }): Promise<{ content: string }> {
+  async respond(request: AgentRequest): Promise<{ content: string }> {
     this.systemPrompts.push(request.systemPrompt);
     this.requestContexts.push(request.requestContext);
     this.userIds.push(request.userId);
+    this.origins.push(
+      request.messages.at(-1)?.additional_kwargs?.response_input_origin,
+    );
     const content = request.messages.at(-1)?.content ?? "";
     this.started.push(content);
     const blocker = this.blockers.get(content);
@@ -411,6 +410,7 @@ test("injects memory policy context for scheduled agent input", async () => {
 
   expect(runtime.requestContexts[0]).toContain("scheduled policy");
   expect(runtime.userIds[0]).toBe("user-1");
+  expect(runtime.origins[0]).toBe("proactive");
   expect(transport.sent[0]?.content).toBe("bot response: scheduled check-in");
   expect(records[0]).toMatchObject({
     kind: "proactive",
@@ -434,6 +434,7 @@ test("injects memory policy context for scheduled agent input", async () => {
     kind: "human",
     sourceInteractionId: "interaction-1",
   });
+  expect(runtime.origins[1]).toBe("human");
   await transport.emit({
     channelId: "mention-channel",
     authorId: "user-1",

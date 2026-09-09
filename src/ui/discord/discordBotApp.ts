@@ -5,7 +5,6 @@ import {
   QueueApi,
   QueueTask,
 } from "@chat-agent/queue";
-import { handleMention } from "../../core/usecases/handleMention";
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
@@ -13,6 +12,12 @@ import {
   ConversationAnalysis,
   ConversationFocus,
 } from "../../infrastructure/agent/conversationFocus";
+import {
+  ResponseInputEnvelope,
+  responseInputEnvelopeFromQueueTask,
+  responseInputTurnRecord,
+  runResponseInput,
+} from "../../core/responseInputEnvelope";
 
 export interface ConversationTopicPlan {
   text: string;
@@ -141,35 +146,14 @@ export class DiscordBotApp {
         conversationTopic?.text,
         conversationAnalysis.focus,
       );
-      const mentionReply = await handleMention(
-        this.identity,
-        this.runtime,
-        {
-          channelId: task.channelId,
-          authorId: task.userId,
-          content: task.text,
-          mentionsBot: task.mentionsBot,
-        },
-        requestContext,
-      );
-      if (mentionReply) {
-        if (!(await this.isCurrentConversationVersion(task))) {
-          this.logInfo(
-            `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
-          );
-          return;
-        }
-        await this.transport.sendMessage(task.channelId, mentionReply);
-        await this.recordTurn(
-          task,
-          mentionReply,
-          conversationTopic?.sourceInteractionId,
+      const envelope = responseInputEnvelopeFromQueueTask(
+        this.identity.botId,
+        task,
+        conversationTopic?.sourceInteractionId ??
+          task.sourceInteractionId ??
           pendingInteractionId,
-        );
-        this.logInfo(`replied id=${task.id} action=mention`);
-      } else {
-        this.logError(`no_reply id=${task.id} action=mention`);
-      }
+      );
+      await this.executeResponse(task, envelope, requestContext);
       return;
     }
 
@@ -183,28 +167,39 @@ export class DiscordBotApp {
         "proactive",
         task.text,
       );
-      const result = await this.runtime.respond({
-        botId: this.identity.botId,
-        userId: task.userId,
-        systemPrompt: this.identity.systemPrompt,
-        ...(requestContext ? { requestContext } : {}),
-        threadId,
-        messages: [{ role: "user", content: task.text }],
-      });
-      if (result.content.length > 0) {
-        if (!(await this.isCurrentConversationVersion(task))) {
-          this.logInfo(
-            `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
-          );
-          return;
-        }
-        await this.transport.sendMessage(task.channelId, result.content);
-        await this.recordTurn(task, result.content);
-        this.logInfo(`replied id=${task.id} action=agent_input`);
-      } else {
-        this.logError(`no_reply id=${task.id} action=agent_input`);
-      }
+      const envelope = responseInputEnvelopeFromQueueTask(
+        this.identity.botId,
+        task,
+        task.sourceInteractionId,
+      );
+      await this.executeResponse(task, envelope, requestContext);
     }
+  }
+
+  private async executeResponse(
+    task: QueueTask,
+    envelope: ResponseInputEnvelope,
+    requestContext?: string,
+  ): Promise<void> {
+    const content = await runResponseInput(
+      this.identity,
+      this.runtime,
+      envelope,
+      requestContext,
+    );
+    if (content.length === 0) {
+      this.logError(`no_reply id=${task.id} action=${task.action}`);
+      return;
+    }
+    if (!(await this.isCurrentConversationVersion(task))) {
+      this.logInfo(
+        `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
+      );
+      return;
+    }
+    await this.transport.sendMessage(envelope.channelId, content);
+    await this.recordTurn(envelope, content);
+    this.logInfo(`replied id=${task.id} action=${task.action}`);
   }
 
   private sendTypingBestEffort(channelId: string): void {
@@ -231,39 +226,17 @@ export class DiscordBotApp {
   }
 
   private async recordTurn(
-    task: QueueTask,
+    envelope: ResponseInputEnvelope,
     assistantContent: string,
-    conversationInteractionId?: string,
-    pendingInteractionId?: string | null,
   ): Promise<void> {
     if (!this.onTurnRecorded) {
       return;
     }
     const timestamp = new Date().toISOString();
-    const sourceInteractionId =
-      task.source === "user"
-        ? (conversationInteractionId ??
-          task.sourceInteractionId ??
-          pendingInteractionId)
-        : task.sourceInteractionId;
     try {
-      await this.onTurnRecorded({
-        botId: this.identity.botId,
-        threadId: task.targetThreadId,
-        kind: task.source === "user" ? "human" : "proactive",
-        ...(sourceInteractionId
-          ? { sourceInteractionId }
-          : {}),
-        messages: [
-          { role: "user", content: task.text, timestampIso: timestamp },
-          {
-            role: "assistant",
-            content: assistantContent,
-            timestampIso: timestamp,
-          },
-        ],
-        createdAtIso: timestamp,
-      });
+      await this.onTurnRecorded(
+        responseInputTurnRecord(envelope, assistantContent, timestamp),
+      );
     } catch (error: unknown) {
       const message =
         error instanceof Error ? (error.stack ?? error.message) : String(error);
