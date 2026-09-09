@@ -44,7 +44,6 @@ import {
 } from "@chat-agent/simple-pomdp-system";
 
 const main = async (): Promise<void> => {
-  console.log("start!");
   const deepagents = await import("deepagents");
   const createDeepAgent = deepagents.createDeepAgent as unknown as (params: {
     model: unknown;
@@ -290,6 +289,6 @@ const main = async (): Promise<void> => {
 main().catch((error: unknown) => {
   const message =
     error instanceof Error ? (error.stack ?? error.message) : String(error);
-  process.stdout.write(`${message}\n`);
+  process.stdout.write(`[discord-startup-error] ${message}\n`);
   process.exit(1);
 });

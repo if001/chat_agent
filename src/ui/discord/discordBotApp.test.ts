@@ -220,6 +220,13 @@ test("second Discord response can use prior checkpoint state for the same bot an
 test("still replies when turn recording fails", async () => {
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
+  const logs: string[] = [];
+  const write = jest
+    .spyOn(process.stdout, "write")
+    .mockImplementation((chunk) => {
+      logs.push(String(chunk));
+      return true;
+    });
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -232,15 +239,22 @@ test("still replies when turn recording fails", async () => {
     },
   );
 
-  app.start();
-  await transport.emit({
-    channelId: "mention-channel",
-    authorId: "user-1",
-    content: "@bot hi",
-    mentionsBot: true,
-  });
+  try {
+    app.start();
+    await transport.emit({
+      channelId: "mention-channel",
+      authorId: "user-1",
+      content: "@bot hi",
+      mentionsBot: true,
+    });
 
-  expect(transport.sent[0]?.content).toBe(`bot response: ${formatUserMessage("@bot hi")}`);
+    expect(transport.sent[0]?.content).toBe(
+      `bot response: ${formatUserMessage("@bot hi")}`,
+    );
+    expect(logs.join("\n")).toContain("record failed");
+  } finally {
+    write.mockRestore();
+  }
 });
 
 test("injects memory policy context into system prompt when resolver returns cards", async () => {
@@ -818,6 +832,9 @@ test("discards a stale response and replans once with all newer user input", asy
   const runtime = new RuntimeStub();
   const contextInputs: string[] = [];
   const records: TurnRecordInput[] = [];
+  let pendingInteractionId: string | null = null;
+  let opportunityCalls = 0;
+  let planCalls = 0;
   runtime.block(formatUserMessage("first"));
 
   const app = new DiscordBotApp(
@@ -834,6 +851,27 @@ test("discards a stale response and replans once with all newer user input", asy
       contextInputs.push(currentContext);
       return `focus for ${currentContext}`;
     },
+    async () => {
+      planCalls += 1;
+      pendingInteractionId = "conversation-stale-1";
+      return {
+        text: "one integrated topic",
+        sourceInteractionId: pendingInteractionId,
+      };
+    },
+    async () => {
+      opportunityCalls += 1;
+      return {
+        focus: {
+          currentTopicStatus: "complete",
+          currentTopicStatusReason: "fixture complete",
+        },
+        reason: "one topic can be integrated",
+        conversationTrigger: "eligible",
+        conversationTriggerReason: "fixture eligible",
+      };
+    },
+    async () => pendingInteractionId,
   );
 
   app.start();
@@ -887,11 +925,14 @@ test("discards a stale response and replans once with all newer user input", asy
   expect(records).toHaveLength(1);
   expect(records[0]).toMatchObject({
     kind: "human",
+    sourceInteractionId: "conversation-stale-1",
     messages: [
       { role: "user", content: mergedInput },
       { role: "assistant", content: `bot response: ${mergedInput}` },
     ],
   });
+  expect(opportunityCalls).toBe(1);
+  expect(planCalls).toBe(1);
 });
 
 test("does not send a duplicate reply when ack fails after a successful response", async () => {

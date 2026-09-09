@@ -407,6 +407,14 @@ test("get_saved_article returns analyzed content only when requested", async () 
   expect(parsed.rawMarkdown).toBeUndefined();
 });
 
+test("get_saved_article does not expose a raw payload mode", () => {
+  const tool = findTool(createCustomTools(createDeps()), "get_saved_article");
+  const detail = (tool.schema as { shape: { detail: { safeParse(value: unknown): unknown } } })
+    .shape.detail;
+
+  expect(detail.safeParse("raw")).toMatchObject({ success: false });
+});
+
 test("get_saved_article can resolve by url", async () => {
   const tools = createCustomTools(createDeps());
 
@@ -543,7 +551,7 @@ test("memory search preserves not_found and converts repeated backend failure to
   );
   expect(unavailable).toEqual({
     status: "unavailable",
-    reason: "503 memory backend unavailable",
+    reason: "Memory search failed",
   });
   expect(calls).toBe(2);
 });

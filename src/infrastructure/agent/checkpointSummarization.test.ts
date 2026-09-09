@@ -156,3 +156,51 @@ test("a resumed checkpoint replaces its prior summary and keeps recent interacti
     "ai-5",
   ]);
 });
+
+test("compaction keeps an agent-initiated turn linked to the user's reaction", async () => {
+  const proactive = new HumanMessage({
+    id: "proactive-1",
+    content: "agent initiated topic",
+    additional_kwargs: {
+      response_input_origin: "proactive",
+      source_interaction_id: "interaction-1",
+    },
+  });
+  const reaction = new HumanMessage({
+    id: "reaction-1",
+    content: "user reaction",
+    additional_kwargs: {
+      response_input_origin: "human",
+      source_interaction_id: "interaction-1",
+    },
+  });
+  const update = await invokeBeforeModel(createMiddlewareForTest(), [
+    ...interaction(1),
+    proactive,
+    new AIMessage({ id: "proactive-reply", content: "topic reply" }),
+    reaction,
+    new AIMessage({ id: "reaction-reply", content: "reaction reply" }),
+  ]);
+  const preserved = update?.messages?.slice(1) ?? [];
+
+  expect(preserved.map((message) => message.id).slice(-4)).toEqual([
+    "proactive-1",
+    "proactive-reply",
+    "reaction-1",
+    "reaction-reply",
+  ]);
+  expect(
+    preserved.find((message) => message.id === "proactive-1")
+      ?.additional_kwargs,
+  ).toMatchObject({
+    response_input_origin: "proactive",
+    source_interaction_id: "interaction-1",
+  });
+  expect(
+    preserved.find((message) => message.id === "reaction-1")
+      ?.additional_kwargs,
+  ).toMatchObject({
+    response_input_origin: "human",
+    source_interaction_id: "interaction-1",
+  });
+});

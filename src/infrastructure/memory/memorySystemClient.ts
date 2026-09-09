@@ -135,9 +135,7 @@ export const createMemorySystemClient = (
         );
       } catch (error: unknown) {
         const message =
-          error instanceof Error
-            ? (error.stack ?? error.message)
-            : String(error);
+          error instanceof Error ? (error.stack ?? error.message) : String(error);
         process.stdout.write(
           `[memory-ingest] failed botId=${input.botId} threadId=${input.threadId}: ${message}\n`,
         );

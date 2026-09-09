@@ -65,10 +65,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
         status: "unavailable",
         reason: `${resultKey} result was omitted`,
       };
-    } catch (error) {
+    } catch {
       return {
         status: "unavailable",
-        reason: error instanceof Error ? error.message : "Memory search failed",
+        reason: "Memory search failed",
       };
     }
   };
@@ -90,7 +90,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
           "knowledge catalog",
         ),
       ]);
-      return JSON.stringify({ memory, knowledge });
+      return JSON.stringify({
+        memory: sanitizeCatalogReasons(memory, "memory catalog"),
+        knowledge: sanitizeCatalogReasons(knowledge, "knowledge catalog"),
+      });
     },
     {
       name: "inspect_context_catalog",
@@ -238,7 +241,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   const getSavedArticleTool = tool(
-    async ({ articleId, url, detail }: { articleId?: string; url?: string; detail?: "summary" | "content" | "raw" }) => {
+    async ({ articleId, url, detail }: { articleId?: string; url?: string; detail?: "summary" | "content" }) => {
       if (!articleId && !url) {
         return JSON.stringify({ error: "articleId or url is required" });
       }
@@ -248,9 +251,6 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       }));
       if (!article) {
         return JSON.stringify(null);
-      }
-      if (detail === "raw") {
-        return JSON.stringify(article);
       }
       const base = {
         id: article.id,
@@ -270,7 +270,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       schema: schemaCompat(z.object({
         articleId: z.string().optional(),
         url: z.string().url().optional(),
-        detail: z.enum(["summary", "content", "raw"]).default("summary"),
+        detail: z.enum(["summary", "content"]).default("summary"),
       })) as never,
     },
   );
@@ -430,11 +430,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
               }
             : { status: "not_found" },
         );
-      } catch (error) {
+      } catch {
         return JSON.stringify({
           status: "unavailable",
-          reason:
-            error instanceof Error ? error.message : "DailyEvent search failed",
+          reason: "DailyEvent search failed",
         });
       }
     },
@@ -570,12 +569,12 @@ const loadCatalog = async <T>(
 > => {
   try {
     return await load();
-  } catch (error) {
+  } catch {
     return {
       status: "unavailable",
       available: false,
       topics: [],
-      reason: error instanceof Error ? error.message : `${label} failed`,
+      reason: `${label} failed`,
     };
   }
 };
@@ -586,3 +585,12 @@ const isTransientError = (error: unknown): boolean => {
     message,
   );
 };
+
+const sanitizeCatalogReasons = <T>(value: T, label: string): T =>
+  JSON.parse(
+    JSON.stringify(value, (key, item: unknown) =>
+      key === "reason" && typeof item === "string"
+        ? `${label} unavailable`
+        : item,
+    ),
+  ) as T;
