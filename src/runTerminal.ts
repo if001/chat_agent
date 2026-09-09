@@ -10,17 +10,11 @@ import { loadEnv } from "./config/env";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
 import {
-  createPostgresPool,
-} from "@chat-agent/knowledge-access";
-import {
   createMemorySystemClient,
   formatPolicyCardsForPrompt,
 } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
-import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
-import { createPostgresTurnRecordReader } from "@chat-agent/memory-system";
-import { createOllamaDialoguePlanningModel } from "@chat-agent/simple-pomdp-system";
 
 const main = async (): Promise<void> => {
   const deepagents = await import("deepagents");
@@ -81,16 +75,6 @@ const main = async (): Promise<void> => {
     ollamaModel: env.ollamaChatModel,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
-  const pool = createPostgresPool(env.postgresUrl);
-  const turnRecordReader = createPostgresTurnRecordReader(env.postgresUrl);
-  const conversationAnalysisService = createConversationAnalysisService({
-    reader: turnRecordReader,
-    model: createOllamaDialoguePlanningModel(
-      env.ollamaBaseUrl,
-      env.ollamaChatModel,
-      env.ollamaApiKey,
-    ),
-  });
   const requestContextBuilder = new RequestContextBuilder(
     memoryClient,
     memoryClient,
@@ -109,7 +93,6 @@ const main = async (): Promise<void> => {
       },
     },
     undefined,
-    conversationAnalysisService,
   );
   const app = new TerminalChatApp(
     identity,
@@ -130,7 +113,6 @@ const main = async (): Promise<void> => {
     }
   } finally {
     rl.close();
-    await Promise.all([turnRecordReader.close(), pool.end()]);
   }
 };
 

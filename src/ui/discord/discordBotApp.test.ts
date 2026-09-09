@@ -7,7 +7,6 @@ import {
   ChannelMessage,
 } from "../../core/types";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
-import type { ConversationFocus } from "../../infrastructure/agent/conversationFocus";
 
 const FIXED_NOW = "2026-05-08T00:00:00.000Z";
 
@@ -553,16 +552,16 @@ test("integrates a conversation topic into one reply and links its next reaction
 });
 
 test.each([
-  ["active", 0],
-  ["complete", 1],
+  ["skip", 0],
+  ["opportunity", 1],
 ] as const)(
-  "uses %s conversation focus when deciding whether to plan a new topic",
-  async (currentTopicStatus, expectedPlans) => {
+  "uses the %s opportunity result when deciding whether to plan a new topic",
+  async (opportunityKind, expectedPlans) => {
     const transport = new TransportStub();
     const runtime = new RuntimeStub();
     const planned: string[] = [];
-    const analyzed: string[] = [];
-    const contextualized: Array<ConversationFocus | null | undefined> = [];
+    const assessed: string[] = [];
+    const contextualized: string[] = [];
     const app = new DiscordBotApp(
       identity,
       runtime,
@@ -571,8 +570,8 @@ test.each([
       undefined,
       undefined,
       undefined,
-      async ({ conversationFocus }) => {
-        contextualized.push(conversationFocus);
+      async ({ kind }) => {
+        contextualized.push(kind);
         return undefined;
       },
       async () => {
@@ -583,18 +582,10 @@ test.each([
         };
       },
       async ({ currentContext }) => {
-        analyzed.push(currentContext);
-        return {
-          focus: {
-            currentTopic: "現在の作業",
-            currentTopicReason: "fixture current topic",
-            currentTopicStatus,
-            currentTopicStatusReason: "fixture status",
-          },
-          reason: "test analysis",
-          conversationTrigger: "eligible",
-          conversationTriggerReason: "test eligibility",
-        };
+        assessed.push(currentContext);
+        return opportunityKind === "opportunity"
+          ? { kind: "opportunity", reason: "prior topic is complete" }
+          : { kind: "skip", reason: "active_conversation", detail: "current work is active" };
       },
     );
 
@@ -607,15 +598,8 @@ test.each([
     });
 
     expect(planned).toHaveLength(expectedPlans);
-    expect(analyzed).toHaveLength(1);
-    expect(contextualized).toEqual([
-      {
-        currentTopic: "現在の作業",
-        currentTopicReason: "fixture current topic",
-        currentTopicStatus,
-        currentTopicStatusReason: "fixture status",
-      },
-    ]);
+    expect(assessed).toHaveLength(1);
+    expect(contextualized).toEqual([expectedPlans ? "conversation" : "human"]);
     expect(transport.sent).toHaveLength(1);
   },
 );
@@ -647,13 +631,9 @@ test.each([
         };
       },
       async () => ({
-        focus: {
-          currentTopicStatus: "complete",
-          currentTopicStatusReason: "fixture complete",
-        },
-        reason: "semantic test",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: triggerReason,
+        kind: "skip",
+        reason: "confirmation",
+        detail: triggerReason,
       }),
     );
 
@@ -674,7 +654,7 @@ test("allows a technical error-handling question when semantic analysis is eligi
   const transport = new TransportStub();
   const runtime = new RuntimeStub();
   const planned: string[] = [];
-  const analyzed: string[] = [];
+  const assessed: string[] = [];
   const app = new DiscordBotApp(
     identity,
     runtime,
@@ -692,16 +672,10 @@ test("allows a technical error-handling question when semantic analysis is eligi
       };
     },
     async ({ currentContext }) => {
-      analyzed.push(currentContext);
+      assessed.push(currentContext);
       return {
-        focus: {
-          currentTopicStatus: "complete",
-          currentTopicStatusReason: "fixture complete",
-        },
-        reason: "technical explanation can conclude in this reply",
-        conversationTrigger: "eligible",
-        conversationTriggerReason:
-          "error is a technical subject, not an incident report",
+        kind: "opportunity",
+        reason: "error is a technical subject, not an incident report",
       };
     },
   );
@@ -714,7 +688,7 @@ test("allows a technical error-handling question when semantic analysis is eligi
     mentionsBot: true,
   });
 
-  expect(analyzed).toHaveLength(1);
+  expect(assessed).toHaveLength(1);
   expect(planned).toEqual(["planned"]);
   expect(transport.sent).toHaveLength(1);
   expect(runtime.requestContexts[0]).toContain("関連する話題");

@@ -144,29 +144,12 @@ test("includes proactive evidence only for proactive requests", async () => {
   expect(proactive).toContain("internal proactive objective");
 });
 
-test("loads conversation focus from the latest request context", async () => {
-  const focusInputs: string[] = [];
+test("does not add analysis-derived context", async () => {
   const builder = new RequestContextBuilder(
     userMemoryStore,
     dailyEventRepository,
     { load: async () => undefined },
     () => new Date("2026-09-01T00:00:00.000Z"),
-    {
-      analyze: async ({ currentContext }) => {
-        focusInputs.push(currentContext);
-        return {
-          focus: {
-            currentTopic: currentContext,
-            currentTopicReason: "latest input establishes the topic",
-            currentTopicStatus: "active",
-            currentTopicStatusReason: "the topic is still active",
-          },
-          reason: "test analysis",
-          conversationTrigger: "ineligible",
-          conversationTriggerReason: "test analysis",
-        };
-      },
-    },
   );
 
   const context = await builder.build({
@@ -177,29 +160,15 @@ test("loads conversation focus from the latest request context", async () => {
     kind: "human",
   });
 
-  expect(focusInputs).toEqual(["latest merged input"]);
-  expect(context).toContain("## Conversation Focus");
-  expect(context).toContain("currentTopic: latest merged input");
+  expect(context).not.toContain("Conversation Focus");
 });
 
-test("uses precomputed focus without a duplicate analysis call", async () => {
-  let calls = 0;
+test("does not add a Conversation Focus section", async () => {
   const builder = new RequestContextBuilder(
     userMemoryStore,
     dailyEventRepository,
     { load: async () => undefined },
     () => new Date("2026-09-01T00:00:00.000Z"),
-    {
-      analyze: async () => {
-        calls += 1;
-        return {
-          focus: null,
-          reason: "should not run",
-          conversationTrigger: "ineligible",
-          conversationTriggerReason: "should not run",
-        };
-      },
-    },
   );
 
   const context = await builder.build({
@@ -208,16 +177,9 @@ test("uses precomputed focus without a duplicate analysis call", async () => {
     threadId: "thread-1",
     currentContext: "latest input",
     kind: "human",
-    conversationFocus: {
-      currentTopic: "precomputed topic",
-      currentTopicReason: "precomputed focus reason",
-      currentTopicStatus: "active",
-      currentTopicStatusReason: "precomputed status reason",
-    },
   });
 
-  expect(calls).toBe(0);
-  expect(context).toContain("currentTopic: precomputed topic");
+  expect(context).not.toContain("Conversation Focus");
 });
 
 test("omits prefetched memory and keeps time, origin, and proactive metadata", async () => {
@@ -226,8 +188,6 @@ test("omits prefetched memory and keeps time, origin, and proactive metadata", a
     { searchDailyEvents: async () => { throw new Error("must not prefetch daily events"); } },
     { load: async () => { throw new Error("must not prefetch policies"); } },
     () => new Date("2026-09-09T00:00:00.000Z"),
-    undefined,
-    { searchRelevant: async () => { throw new Error("must not prefetch knowledge"); } },
   );
 
   const context = await builder.build({

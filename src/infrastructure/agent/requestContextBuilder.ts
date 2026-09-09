@@ -1,9 +1,4 @@
 import { MemorySystemClient } from "../memory/memorySystemClient";
-import {
-  ConversationAnalysisService,
-  ConversationFocus,
-  formatConversationFocus,
-} from "./conversationFocus";
 
 export type RequestKind =
   | "human"
@@ -18,7 +13,6 @@ export interface RequestContextInput {
   currentContext: string;
   kind: RequestKind;
   proactiveEvidence?: string;
-  conversationFocus?: ConversationFocus | null;
 }
 
 export interface PolicyContextReader {
@@ -51,36 +45,12 @@ export class RequestContextBuilder {
     private readonly dailyEventClient: Pick<MemorySystemClient, "searchDailyEvents">,
     private readonly policyContextReader: PolicyContextReader,
     private readonly now: () => Date = () => new Date(),
-    private readonly conversationAnalysisService?: ConversationAnalysisService,
-    private readonly knowledgeContextReader?: KnowledgeContextReader,
   ) {}
 
   async build(input: RequestContextInput): Promise<string> {
-    const analysisService = this.conversationAnalysisService;
-    const hasPrecomputedFocus = "conversationFocus" in input;
-    const focus = hasPrecomputedFocus
-      ? input.conversationFocus ?? null
-      : analysisService
-        ? await loadOrDefault(
-            () =>
-              analysisService
-                .analyze({
-                  botId: input.botId,
-                  threadId: input.threadId,
-                  currentContext: input.currentContext,
-                })
-                .then(({ focus: analyzedFocus }) => analyzedFocus),
-            null,
-          )
-        : null;
-
     const sections = [
       `# Request Context\nCurrent time: ${this.now().toISOString()}\nInput origin: ${input.kind}`,
     ];
-    const formattedFocus = formatConversationFocus(focus);
-    if (formattedFocus) {
-      sections.push(`## Conversation Focus\n${formattedFocus}`);
-    }
     if (
       (input.kind === "conversation" || input.kind === "proactive") &&
       input.proactiveEvidence?.trim()
@@ -93,12 +63,10 @@ export class RequestContextBuilder {
   }
 
 }
-
 const fitWholeSections = (sections: string[], maxLength: number): string => {
   const priority = (section: string): number => {
     if (section.startsWith("# Request Context")) return 0;
-    if (section.startsWith("## Conversation Focus")) return 1;
-    if (section.startsWith("## Proactive Internal Context")) return 2;
+    if (section.startsWith("## Proactive Internal Context")) return 1;
     return 6;
   };
   const accepted: string[] = [];
@@ -110,17 +78,4 @@ const fitWholeSections = (sections: string[], maxLength: number): string => {
     length += addedLength;
   }
   return accepted.join("\n\n");
-};
-
-
-
-const loadOrDefault = async <T>(
-  load: () => Promise<T>,
-  fallback: T,
-): Promise<T> => {
-  try {
-    return await load();
-  } catch {
-    return fallback;
-  }
 };

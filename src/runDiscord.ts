@@ -20,7 +20,6 @@ import {
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
-import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
 import { createCheckpointSummarizationMiddleware } from "./infrastructure/agent/checkpointSummarization";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
@@ -37,10 +36,10 @@ import {
   createFileTopicStateStore,
   createPendingInteractionResolver,
   createOllamaDialoguePlanningModel,
+  createMemoryServiceContextSource,
   createSavedKnowledgeContextSource,
   createSimplePomdpSystemService,
   createTopicStateInteractionLogContextSource,
-  createUserMemoryContextSource,
   loadInitialDomainCandidates,
 } from "@chat-agent/simple-pomdp-system";
 
@@ -215,15 +214,9 @@ const main = async (): Promise<void> => {
     topicStateStore,
     interactionLogStore,
     contextSources: [
-      createUserMemoryContextSource({
-        reader: {
-          listRecentUserMemory: async ({ userId, limit }) =>
-            (await memoryClient.searchUserNotes(userId, "", limit)).map(
-              (note) => ({
-                text: note.note,
-                createdAtIso: note.createdAt.toISOString(),
-              }),
-            ),
+      createMemoryServiceContextSource({
+        memoryService: {
+          search: (input) => memoryClient.searchMemory(input),
         },
       }),
       createSavedKnowledgeContextSource({
@@ -245,14 +238,6 @@ const main = async (): Promise<void> => {
         process.cwd(),
         "packages/simple-pomdp-system/domains/initial_domains.txt",
       ),
-    ),
-  });
-  const conversationAnalysisService = createConversationAnalysisService({
-    reader: turnRecordReader,
-    model: createOllamaDialoguePlanningModel(
-      env.ollamaBaseUrl,
-      env.ollamaChatModel,
-      env.ollamaApiKey,
     ),
   });
   const pendingInteractionResolver = createPendingInteractionResolver({
@@ -277,21 +262,6 @@ const main = async (): Promise<void> => {
       },
     },
     undefined,
-    conversationAnalysisService,
-    {
-      searchRelevant: async ({ query, limit }) =>
-        (await knowledgeAccessService.searchSavedKnowledge({
-          query,
-          limit,
-          minScore: 0.35,
-        })).map(({ articleId, title, summary, tags, url }) => ({
-          articleId,
-          title,
-          summary,
-          tags,
-          url,
-        })),
-    },
   );
   const app = new DiscordBotApp(
     identity,
@@ -303,13 +273,13 @@ const main = async (): Promise<void> => {
     createTurnRecorder(memoryClient),
     (input) => requestContextBuilder.build(input),
     async ({ botId, threadId, userId }) =>
-      conversationPlanner.runTrigger({
+      conversationPlanner.planInteraction({
         botId,
         threadId,
         userId,
         trigger: "conversation",
       }),
-    (input) => conversationAnalysisService.analyze(input),
+    (input) => conversationPlanner.assessConversationOpportunity(input),
     (input) => pendingInteractionResolver.resolve(input),
   );
   app.start();
