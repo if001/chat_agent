@@ -1,5 +1,4 @@
 import {
-  bigserial,
   pgTable,
   text,
   timestamp,
@@ -15,18 +14,6 @@ export const articlesTable = pgTable("articles", {
   tags: text("tags").array().notNull(),
   rawMarkdown: text("raw_markdown").notNull(),
   embedding: vector("embedding", { dimensions: 768 }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
-
-export const dailyEventsTable = pgTable("daily_events", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  userId: text("user_id").notNull(),
-  eventDate: text("event_date").notNull(),
-  summary: text("summary").notNull(),
-  tags: text("tags").array().notNull(),
-  sourceMessage: text("source_message"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

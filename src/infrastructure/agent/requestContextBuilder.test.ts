@@ -1,4 +1,4 @@
-import { DailyEventRepository } from "../../core/types";
+import { MemorySystemClient } from "../memory/memorySystemClient";
 import { RequestContextBuilder } from "./requestContextBuilder";
 
 const userMemoryStore = {
@@ -11,7 +11,6 @@ const dailyEventRepository = {
   searchDailyEvents: async ({ userId }: { userId: string }) => [
     {
       id: 1,
-      botId: "shared",
       userId,
       eventDate: "2026-09-01",
       summary: "shared event",
@@ -19,7 +18,7 @@ const dailyEventRepository = {
       createdAt: new Date(0),
     },
   ],
-} as DailyEventRepository;
+} as Pick<MemorySystemClient, "searchDailyEvents">;
 
 test("builds fresh shared context and bot-specific policy for every request", async () => {
   const policyInputs: string[] = [];
@@ -70,7 +69,7 @@ test("loads daily events only for temporal requests", async () => {
         queries.push(query);
         return [{ id: 1, userId: "discord-1", eventDate: "2026-09-01", summary: "shared event", tags: [], createdAt: new Date(0) }];
       },
-    } as DailyEventRepository,
+    } as Pick<MemorySystemClient, "searchDailyEvents">,
     { load: async () => undefined },
   );
 

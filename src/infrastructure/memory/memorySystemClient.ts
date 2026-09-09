@@ -1,5 +1,9 @@
 import type {
   MemorySystemService as PackageMemorySystemService,
+  DailyEvent as PackageDailyEvent,
+  GetDailyEventsByDateInput as PackageGetDailyEventsByDateInput,
+  RememberDailyEventInput as PackageRememberDailyEventInput,
+  SearchDailyEventsInput as PackageSearchDailyEventsInput,
   UserMemoryWriteResult as PackageUserMemoryWriteResult,
   UserNote as PackageUserNote,
 } from "@chat-agent/memory-system";
@@ -8,6 +12,10 @@ type ChatRole = "system" | "user" | "assistant";
 
 export type MemoryUserNote = PackageUserNote;
 export type UserMemoryWriteResult = PackageUserMemoryWriteResult;
+export type DailyEvent = PackageDailyEvent;
+export type RememberDailyEventInput = PackageRememberDailyEventInput;
+export type SearchDailyEventsInput = PackageSearchDailyEventsInput;
+export type GetDailyEventsByDateInput = PackageGetDailyEventsByDateInput;
 type MemorySystemService = Pick<
   PackageMemorySystemService,
   | "ingestTurnRecord"
@@ -16,6 +24,9 @@ type MemorySystemService = Pick<
   | "searchUserNotes"
   | "replaceUserNote"
   | "deleteUserNote"
+  | "rememberDailyEvent"
+  | "searchDailyEvents"
+  | "getDailyEventsByDate"
 >;
 
 interface TurnMessage {
@@ -61,6 +72,9 @@ export interface MemorySystemClient {
     note: string,
   ): Promise<UserMemoryWriteResult>;
   deleteUserNote(userId: string, noteId: number): Promise<boolean>;
+  rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent>;
+  searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]>;
+  getDailyEventsByDate(input: GetDailyEventsByDateInput): Promise<DailyEvent[]>;
 }
 
 export interface MemorySystemClientOptions {
@@ -139,6 +153,18 @@ export const createMemorySystemClient = (
     deleteUserNote: async (userId, noteId) => {
       if (!service) return false;
       return service.deleteUserNote({ userId, noteId });
+    },
+    rememberDailyEvent: async (input) => {
+      if (!service) throw new Error("memory-system is unavailable");
+      return service.rememberDailyEvent(input);
+    },
+    searchDailyEvents: async (input) => {
+      if (!service) return [];
+      return service.searchDailyEvents(input);
+    },
+    getDailyEventsByDate: async (input) => {
+      if (!service) return [];
+      return service.getDailyEventsByDate(input);
     },
   };
 };

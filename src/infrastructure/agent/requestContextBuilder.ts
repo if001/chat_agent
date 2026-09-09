@@ -1,6 +1,3 @@
-import {
-  DailyEventRepository,
-} from "../../core/types";
 import { MemorySystemClient } from "../memory/memorySystemClient";
 import {
   ConversationAnalysisService,
@@ -50,7 +47,7 @@ export interface KnowledgeContextReader {
 export class RequestContextBuilder {
   constructor(
     private readonly userMemoryClient: Pick<MemorySystemClient, "searchUserNotes">,
-    private readonly dailyEventRepository: DailyEventRepository,
+    private readonly dailyEventClient: Pick<MemorySystemClient, "searchDailyEvents">,
     private readonly policyContextReader: PolicyContextReader,
     private readonly now: () => Date = () => new Date(),
     private readonly conversationAnalysisService?: ConversationAnalysisService,
@@ -74,7 +71,7 @@ export class RequestContextBuilder {
       ),
       shouldLoadEvents ? loadOrDefault(
         () =>
-          this.dailyEventRepository.searchDailyEvents({
+          this.dailyEventClient.searchDailyEvents({
             userId: input.userId,
             query: compactQuery(input.currentContext),
             limit: 5,
