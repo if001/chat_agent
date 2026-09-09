@@ -6,6 +6,10 @@ import type {
   SearchDailyEventsInput as PackageSearchDailyEventsInput,
   UserMemoryWriteResult as PackageUserMemoryWriteResult,
   UserNote as PackageUserNote,
+  MemoryCatalog as PackageMemoryCatalog,
+  MemoryCatalogRequest as PackageMemoryCatalogRequest,
+  MemorySearchRequest as PackageMemorySearchRequest,
+  MemorySearchResult as PackageMemorySearchResult,
 } from "@chat-agent/memory-system";
 
 type ChatRole = "system" | "user" | "assistant";
@@ -16,6 +20,10 @@ export type DailyEvent = PackageDailyEvent;
 export type RememberDailyEventInput = PackageRememberDailyEventInput;
 export type SearchDailyEventsInput = PackageSearchDailyEventsInput;
 export type GetDailyEventsByDateInput = PackageGetDailyEventsByDateInput;
+export type MemoryCatalog = PackageMemoryCatalog;
+export type MemoryCatalogRequest = PackageMemoryCatalogRequest;
+export type MemorySearchRequest = PackageMemorySearchRequest;
+export type MemorySearchResult = PackageMemorySearchResult;
 type MemorySystemService = Pick<
   PackageMemorySystemService,
   | "ingestTurnRecord"
@@ -27,6 +35,7 @@ type MemorySystemService = Pick<
   | "rememberDailyEvent"
   | "searchDailyEvents"
   | "getDailyEventsByDate"
+  | "inspectCatalog"
 >;
 
 interface TurnMessage {
@@ -75,6 +84,8 @@ export interface MemorySystemClient {
   rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent>;
   searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]>;
   getDailyEventsByDate(input: GetDailyEventsByDateInput): Promise<DailyEvent[]>;
+  inspectCatalog(input: MemoryCatalogRequest): Promise<MemoryCatalog>;
+  searchMemory(input: MemorySearchRequest): Promise<MemorySearchResult>;
 }
 
 export interface MemorySystemClientOptions {
@@ -176,6 +187,53 @@ export const createMemorySystemClient = (
       if (!service) return [];
       return service.getDailyEventsByDate(input);
     },
+    inspectCatalog: async (input) => {
+      if (!service) return unavailableCatalog("memory-system is unavailable");
+      return service.inspectCatalog(input);
+    },
+    searchMemory: async (input) => {
+      if (!service) return unavailableSearchResult(input);
+      return service.search(input);
+    },
+  };
+};
+
+const unavailableCatalog = (reason: string): MemoryCatalog => {
+  const entry = () => ({
+    status: "unavailable" as const,
+    available: false,
+    topics: [],
+    reason,
+  });
+  return {
+    status: "unavailable",
+    conversationHistory: entry(),
+    userMemory: entry(),
+    dailyEvents: entry(),
+    policyCards: entry(),
+  };
+};
+
+const unavailableSearchResult = (
+  input: MemorySearchRequest,
+): MemorySearchResult => {
+  const unavailable = {
+    status: "unavailable" as const,
+    reason: "memory-system is unavailable",
+  };
+  return {
+    ...(input.scopes.includes("conversation_history")
+      ? { conversationHistory: unavailable }
+      : {}),
+    ...(input.scopes.includes("user_memory")
+      ? { userMemory: unavailable }
+      : {}),
+    ...(input.scopes.includes("daily_events")
+      ? { dailyEvents: unavailable }
+      : {}),
+    ...(input.scopes.includes("policy_cards")
+      ? { policyCards: unavailable }
+      : {}),
   };
 };
 

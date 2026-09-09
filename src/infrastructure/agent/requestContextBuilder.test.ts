@@ -20,7 +20,7 @@ const dailyEventRepository = {
   ],
 } as Pick<MemorySystemClient, "searchDailyEvents">;
 
-test("builds fresh shared context and bot-specific policy for every request", async () => {
+test("builds fresh time and origin context without prefetching memory", async () => {
   const policyInputs: string[] = [];
   let current = new Date("2026-09-01T00:00:00.000Z");
   const builder = new RequestContextBuilder(
@@ -53,11 +53,12 @@ test("builds fresh shared context and bot-specific policy for every request", as
 
   expect(first).toContain("2026-09-01T00:00:00.000Z");
   expect(second).toContain("2026-09-01T01:00:00.000Z");
-  expect(first).toContain("shared note for discord-1");
+  expect(first).toContain("Input origin: human");
+  expect(first).not.toContain("shared note for discord-1");
   expect(second).not.toContain("shared event");
-  expect(first).toContain("policy for ao");
-  expect(second).toContain("policy for aka");
-  expect(policyInputs).toEqual(["ao", "aka"]);
+  expect(first).not.toContain("policy for ao");
+  expect(second).not.toContain("policy for aka");
+  expect(policyInputs).toEqual([]);
 });
 
 test("loads daily events only for temporal requests", async () => {
@@ -77,8 +78,8 @@ test("loads daily events only for temporal requests", async () => {
   const temporal = await builder.build({ botId: "ao", userId: "discord-1", threadId: "t", currentContext: "昨日は何をした？", kind: "human" });
 
   expect(ordinary).not.toContain("shared event");
-  expect(temporal).toContain("shared event");
-  expect(queries).toEqual(["昨日は何をした？"]);
+  expect(temporal).not.toContain("shared event");
+  expect(queries).toEqual([]);
 });
 
 test("injects only lightweight shared article candidates for knowledge requests", async () => {
@@ -101,9 +102,9 @@ test("injects only lightweight shared article candidates for knowledge requests"
   const question = await builder.build({ botId: "aka", userId: "u", threadId: "t", currentContext: "以前共有したagentの記事について教えて？", kind: "human" });
 
   expect(greeting).not.toContain("Relevant Shared Articles");
-  expect(question).toContain("articleId=article-1");
+  expect(question).not.toContain("articleId=article-1");
   expect(question).not.toContain("rawMarkdown");
-  expect(queries).toEqual(["以前共有したagentの記事について教えて？"]);
+  expect(queries).toEqual([]);
 });
 
 test("marks relevant shared article retrieval failures without failing the request", async () => {
@@ -116,7 +117,7 @@ test("marks relevant shared article retrieval failures without failing the reque
     { searchRelevant: async () => { throw new Error("temporary backend failure"); } },
   );
   const context = await builder.build({ botId: "ao", userId: "u", threadId: "t", currentContext: "共有した記事の内容を教えて？", kind: "human" });
-  expect(context).toContain("Relevant saved articles could not be checked");
+  expect(context).not.toContain("Relevant saved articles could not be checked");
 });
 
 test("includes proactive evidence only for proactive requests", async () => {
@@ -217,4 +218,29 @@ test("uses precomputed focus without a duplicate analysis call", async () => {
 
   expect(calls).toBe(0);
   expect(context).toContain("currentTopic: precomputed topic");
+});
+
+test("omits prefetched memory and keeps time, origin, and proactive metadata", async () => {
+  const builder = new RequestContextBuilder(
+    { searchUserNotes: async () => { throw new Error("must not prefetch user memory"); } },
+    { searchDailyEvents: async () => { throw new Error("must not prefetch daily events"); } },
+    { load: async () => { throw new Error("must not prefetch policies"); } },
+    () => new Date("2026-09-09T00:00:00.000Z"),
+    undefined,
+    { searchRelevant: async () => { throw new Error("must not prefetch knowledge"); } },
+  );
+
+  const context = await builder.build({
+    botId: "ao",
+    userId: "user-1",
+    threadId: "thread-1",
+    currentContext: "remember the earlier topic",
+    kind: "proactive",
+    proactiveEvidence: "follow up on the saved plan",
+  });
+
+  expect(context).toContain("Current time: 2026-09-09T00:00:00.000Z");
+  expect(context).toContain("Input origin: proactive");
+  expect(context).toContain("follow up on the saved plan");
+  expect(context).not.toMatch(/Shared UserMemory|Shared DailyEvent|PolicyCard|Shared Articles/);
 });

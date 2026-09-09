@@ -25,6 +25,7 @@ export interface AgentRuntime {
 
 export type {
   KnowledgeRepository,
+  KnowledgeCatalogSourceItem,
   SavedArticle,
   SearchKnowledgeOptions,
   SearchResultItem,

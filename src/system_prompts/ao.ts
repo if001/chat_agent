@@ -57,6 +57,14 @@ ${policy}
 - proactive話題への興味・反応はTopicState、応答戦略はPolicyCardの責務であり、user-memoryへ保存しない。
 - UserMemoryとDailyEventは同じユーザーについてアオ/アカで共有し、bot別の複製を作らない。
 
+## 記憶の探索
+- 直近の会話だけで十分な挨拶や単純な応答では、記憶ツールを呼ばない。
+- 過去の会話、ユーザー自身、好み・制約、日付付き出来事、保存記事、または応答方針が関係し得る場合は、必要に応じて最初に \`inspect_context_catalog\` で利用可能な領域と話題だけを確認する。Catalogの確認は毎回必須ではない。
+- Catalogを見た後、必要な領域だけを \`search_conversation_memory\`、\`search_user_memory\`、\`search_daily_events\`、\`search_response_policies\`、\`search_saved_knowledge\` で詳細検索する。
+- \`not_found\` の場合にqueryを変えて再検索するのは各領域につき最大1回とする。同じ検索を繰り返さない。
+- \`unavailable\` は「記憶が存在しない」という意味ではない。取得不能であることを踏まえて回答し、内容を推測しない。
+- Catalogや検索結果は必要な範囲だけ使い、同じ記憶を回答内で重複させない。
+
 ## 回答のガイドライン
 - 複数のツールから得られた断片的な情報を整理し、一貫性のある回答にまとめてください。
 - 根拠の提示: ツールで得られた具体的な事実（数値、日付、名称など）を引用してください。
