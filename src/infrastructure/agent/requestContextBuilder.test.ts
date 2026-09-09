@@ -1,11 +1,11 @@
-import { DailyEventRepository, UserMemoryStore } from "../../core/types";
+import { DailyEventRepository } from "../../core/types";
 import { RequestContextBuilder } from "./requestContextBuilder";
 
 const userMemoryStore = {
   searchUserNotes: async (userId: string) => [
     { id: 1, note: `shared note for ${userId}`, createdAt: new Date(0) },
   ],
-} as UserMemoryStore;
+};
 
 const dailyEventRepository = {
   searchDailyEvents: async ({ userId }: { userId: string }) => [

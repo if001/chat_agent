@@ -2,9 +2,8 @@ import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import {
   DailyEvent,
   DailyEventRepository,
-  UserMemoryStore,
-  UserNote,
 } from "../core/types";
+import { MemoryUserNote } from "../infrastructure/memory/memorySystemClient";
 import {
   createConversationAnalysisService,
 } from "../infrastructure/agent/conversationFocus";
@@ -17,8 +16,8 @@ import {
   longConversationFixture,
 } from "./fixtures/longConversation";
 
-class FixtureUserMemoryStore implements UserMemoryStore {
-  private notes: UserNote[] = [
+class FixtureUserMemoryStore {
+  private notes: MemoryUserNote[] = [
     {
       id: 1,
       note: "簡潔な回答を好む",
@@ -26,17 +25,17 @@ class FixtureUserMemoryStore implements UserMemoryStore {
     },
   ];
 
-  async rememberUserNote(_userId: string, note: string): Promise<UserNote> {
+  async rememberUserNote(_userId: string, note: string) {
     const saved = { id: this.notes.length + 1, note, createdAt: new Date() };
     this.notes.push(saved);
-    return saved;
+    return { ok: true, action: "create" as const, note: saved };
   }
 
   async searchUserNotes(
     _userId: string,
     _query: string,
     limit: number,
-  ): Promise<UserNote[]> {
+  ): Promise<MemoryUserNote[]> {
     return this.notes
       .slice(0, limit);
   }
@@ -45,14 +44,14 @@ class FixtureUserMemoryStore implements UserMemoryStore {
     _userId: string,
     noteId: number,
     note: string,
-  ): Promise<UserNote | null> {
+  ) {
     const index = this.notes.findIndex((item) => item.id === noteId);
     if (index < 0) {
-      return null;
+      return { ok: false };
     }
     const saved = { ...this.notes[index]!, note };
     this.notes[index] = saved;
-    return saved;
+    return { ok: true, action: "replace" as const, note: saved };
   }
 
   async deleteUserNote(_userId: string, noteId: number): Promise<boolean> {
@@ -130,15 +129,7 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
   const dailyEventRepository = new FixtureDailyEvents();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryStore,
-    userMemoryWritePlanner: {
-      decide: async ({ explicitTargetNoteId }) => ({
-        destination: "user_memory" as const,
-        action: "replace" as const,
-        targetNoteId: explicitTargetNoteId as number,
-        reason: "fixture correction",
-      }),
-    },
+    userMemoryClient: userMemoryStore,
     dailyEventRepository,
     botId: "ao",
     runtimeContext: {
@@ -152,7 +143,7 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
 
   const searched = JSON.parse(
     (await findTool(tools, "search_user_notes").invoke({ query: "簡潔" })) as string,
-  ) as UserNote[];
+  ) as MemoryUserNote[];
   expect(searched).toHaveLength(1);
   await findTool(tools, "replace_user_note").invoke({
     noteId: searched[0]?.id,

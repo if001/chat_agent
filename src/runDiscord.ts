@@ -17,8 +17,6 @@ import {
   createOllamaChatModel,
   createOllamaChatModelCloud,
 } from "./infrastructure/agent/ollamaChatModel";
-import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
-import { createUserMemoryWritePlanner } from "./infrastructure/memory/userMemoryWritePlanner";
 import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
@@ -94,8 +92,13 @@ const main = async (): Promise<void> => {
   );
   const repository = new PostgresKnowledgeRepository(db, embeddingProvider);
 
-  const userMemoryStore = new PostgresUserMemoryStore(db);
   const dailyEventRepository = new PostgresDailyEventRepository(db);
+  const memoryClient = createMemorySystemClient({
+    postgresUrl: env.postgresUrl,
+    ollamaBaseUrl: env.ollamaBaseUrl,
+    ollamaModel: env.ollamaChatModel,
+    ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
+  });
 
   const checkpointer = PostgresSaver.fromConnString(env.postgresUrl, {
     schema: "app",
@@ -132,14 +135,7 @@ const main = async (): Promise<void> => {
   const runtimeContext = new AgentRuntimeContext();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryStore,
-    userMemoryWritePlanner: createUserMemoryWritePlanner(
-      createOllamaDialoguePlanningModel(
-        env.ollamaBaseUrl,
-        env.ollamaChatModel,
-        env.ollamaApiKey,
-      ),
-    ),
+    userMemoryClient: memoryClient,
     dailyEventRepository,
     botId: identity.botId,
     runtimeContext,
@@ -198,12 +194,6 @@ const main = async (): Promise<void> => {
     discordClient,
     env.allowedBotUserIds,
   );
-  const memoryClient = createMemorySystemClient({
-    postgresUrl: env.postgresUrl,
-    ollamaBaseUrl: env.ollamaBaseUrl,
-    ollamaModel: env.ollamaChatModel,
-    ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
-  });
   const turnRecordReader = createPostgresTurnRecordReader(env.postgresUrl);
   const topicStateStore = createFileTopicStateStore({
     baseDir: join(env.simplePomdpStoreDir, "topic-states"),
@@ -219,7 +209,7 @@ const main = async (): Promise<void> => {
       createUserMemoryContextSource({
         reader: {
           listRecentUserMemory: async ({ userId, limit }) =>
-            (await userMemoryStore.searchUserNotes(userId, "", limit)).map(
+            (await memoryClient.searchUserNotes(userId, "", limit)).map(
               (note) => ({
                 text: note.note,
                 createdAtIso: note.createdAt.toISOString(),
@@ -261,7 +251,7 @@ const main = async (): Promise<void> => {
     interactionLogStore,
   });
   const requestContextBuilder = new RequestContextBuilder(
-    userMemoryStore,
+    memoryClient,
     dailyEventRepository,
     {
       load: async ({ botId, threadId, currentContext }) => {

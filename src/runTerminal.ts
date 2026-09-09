@@ -18,7 +18,6 @@ import {
   formatPolicyCardsForPrompt,
 } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
-import { PostgresUserMemoryStore } from "./infrastructure/memory/postgresUserMemoryStore";
 import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
 import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
@@ -96,7 +95,7 @@ const main = async (): Promise<void> => {
     ),
   });
   const requestContextBuilder = new RequestContextBuilder(
-    new PostgresUserMemoryStore(db),
+    memoryClient,
     new PostgresDailyEventRepository(db),
     {
       load: async ({ botId, threadId, currentContext }) => {
