@@ -32,5 +32,11 @@ FORCE_COLOR=1 npm run start:ingest 2>&1 | colorize "$YELLOW" "ingest" &
 FORCE_COLOR=1 npm run start:memory 2>&1 | colorize "$CYAN" "memory" &
 FORCE_COLOR=1 npm run start:simple-pomdp 2>&1 | colorize "$GREEN" "pomdp" &
 
+FORCE_COLOR=1 npm run start:setup-memory 2>&1 | colorize "$CYAN" "memory" &
+FORCE_COLOR=1 npm run start:simple-pomdp 2>&1 | colorize "$GREEN" "pomdp" &
+
+# FORCE_COLOR=1 cd packages/memory-system && npm run start:background 2>&1 | colorize "$CYAN" "memory" &
+# FORCE_COLOR=1 cd packages/simple-pomdp-system && npm run start:background 2>&1 | colorize "$GREEN" "pomdp" &
+
 wait
 echo "done"
