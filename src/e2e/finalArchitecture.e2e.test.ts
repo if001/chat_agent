@@ -4,17 +4,11 @@ import {
   MemorySystemClient,
   MemoryUserNote,
 } from "../infrastructure/memory/memorySystemClient";
-import {
-  createConversationAnalysisService,
-} from "../infrastructure/agent/conversationFocus";
 import { createCustomTools } from "../infrastructure/agent/customTools";
 import { DeepAgentRuntime } from "../infrastructure/agent/deepAgentRuntime";
 import { RequestContextBuilder } from "../infrastructure/agent/requestContextBuilder";
 import { loadSystemPromptByBotId } from "../config/systemPromptLoader";
-import {
-  completedConversationTurn,
-  longConversationFixture,
-} from "./fixtures/longConversation";
+import { longConversationFixture } from "./fixtures/longConversation";
 
 class FixtureUserMemoryStore {
   private notes: MemoryUserNote[] = [
@@ -130,7 +124,7 @@ const findTool = (
   return selected;
 };
 
-test("fixed long conversation preserves focus without eager memory injection", async () => {
+test("fixed long conversation uses checkpoint context without eager memory injection", async () => {
   const userMemoryStore = new FixtureUserMemoryStore();
   const dailyEventRepository = new FixtureDailyEvents();
   const tools = createCustomTools({
@@ -156,51 +150,6 @@ test("fixed long conversation preserves focus without eager memory injection", a
     note: "詳しい回答を好む",
   });
 
-  const createFixtureAnalysis = (includeCompleted: boolean = false) =>
-    createConversationAnalysisService({
-      reader: {
-        listRecentTurnRecords: async ({ botId, threadId, limit }) =>
-          [
-            ...longConversationFixture,
-            ...(includeCompleted ? [completedConversationTurn] : []),
-          ]
-            .filter(
-              (record) =>
-                record.botId === botId && record.threadId === threadId,
-            )
-            .slice(-limit),
-      },
-      model: {
-        generateJson: async <T>(_systemPrompt: string, userPrompt: string) =>
-          (userPrompt.includes("この件は解決しました")
-              ? {
-                currentTopicStatus: "complete",
-                currentTopicStatusReason:
-                  "the user explicitly says the issue is resolved",
-                reason: "fixture topic was completed",
-                conversationTrigger: "eligible",
-                conversationTriggerReason: "fixture topic is complete",
-              }
-              : {
-                currentTopic: "CIが失敗する理由は何ですか？",
-                currentTopicReason:
-                  "the user explicitly returns to the CI investigation",
-                unresolvedQuestion: "CIが失敗する理由は何ですか？",
-                unresolvedQuestionReason:
-                  "the cause of the CI failure has not been answered",
-                agentCommitment: "ログを確認して後で共有します。",
-                agentCommitmentReason:
-                  "the assistant said it would inspect and report the logs",
-                currentTopicStatus: "active",
-                currentTopicStatusReason:
-                  "the unresolved question and commitment remain active",
-                reason: "fixture returned to unresolved CI investigation",
-                conversationTrigger: "ineligible",
-                conversationTriggerReason: "fixture topic is active",
-              }) as T,
-      },
-    });
-  const conversationAnalysisService = createFixtureAnalysis();
   const policyInputs: string[] = [];
   const builder = new RequestContextBuilder(
     userMemoryStore,
@@ -212,7 +161,6 @@ test("fixed long conversation preserves focus without eager memory injection", a
       },
     },
     () => new Date("2026-09-01T09:00:00.000Z"),
-    conversationAnalysisService,
   );
   const build = (botId: string) =>
     builder.build({
@@ -230,56 +178,11 @@ test("fixed long conversation preserves focus without eager memory injection", a
   expect(aoContext).not.toContain("CIの原因調査を再開した");
   expect(aoContext).not.toContain("release 1.0を公開した");
   expect(aoContext).not.toContain("ao-only policy");
-  expect(aoContext).toContain(
-    "currentTopicReason: the user explicitly returns to the CI investigation",
-  );
-  expect(aoContext).toContain(
-    "agentCommitmentReason: the assistant said it would inspect and report the logs",
-  );
+  expect(aoContext).not.toContain("Conversation Focus");
   expect(aoContext).not.toContain("aka-only policy");
   expect(akaContext).not.toContain("aka-only policy");
   expect(akaContext).not.toContain("ao-only policy");
   expect(policyInputs).toEqual([]);
-
-  const focus = await conversationAnalysisService.analyze({
-    botId: "ao",
-    threadId: "shared-thread",
-    currentContext: "元のCIの話に戻って続きを進めよう",
-  });
-  expect(focus.focus).toMatchObject({
-    currentTopic: "CIが失敗する理由は何ですか？",
-    currentTopicReason:
-      "the user explicitly returns to the CI investigation",
-    unresolvedQuestion: "CIが失敗する理由は何ですか？",
-    unresolvedQuestionReason:
-      "the cause of the CI failure has not been answered",
-    agentCommitment: "ログを確認して後で共有します。",
-    agentCommitmentReason:
-      "the assistant said it would inspect and report the logs",
-    currentTopicStatus: "active",
-    currentTopicStatusReason:
-      "the unresolved question and commitment remain active",
-  });
-  const acknowledged = await conversationAnalysisService.analyze({
-    botId: "ao",
-    threadId: "shared-thread",
-    currentContext: "了解",
-  });
-  expect(acknowledged.focus?.currentTopic).not.toBe("了解");
-  expect(acknowledged.focus?.currentTopicStatus).toBe("active");
-  expect(
-    (
-      await createFixtureAnalysis(true).analyze({
-        botId: "ao",
-        threadId: "shared-thread",
-        currentContext: "ここで区切ります",
-      })
-    ).focus,
-  ).toEqual({
-    currentTopicStatus: "complete",
-    currentTopicStatusReason:
-      "the user explicitly says the issue is resolved",
-  });
 
   const proactive = longConversationFixture.find(
     (record) => record.kind === "proactive",
@@ -350,66 +253,4 @@ test("fixed long conversation preserves focus without eager memory injection", a
   expect(invocationContexts[0]).not.toContain("aka-only policy");
   expect(invocationContexts[1]).not.toContain("aka-only policy");
   expect(invocationContexts[1]).not.toContain("ao-only policy");
-});
-
-test("conversation analysis excludes human turns older than its 12-record window", async () => {
-  const base = longConversationFixture.find((record) => record.kind === "human");
-  expect(base).toBeDefined();
-  const oldMusicTurn = {
-    ...base!,
-    createdAtIso: "2026-08-01T00:00:00.000Z",
-    messages: [
-      {
-        role: "user" as const,
-        content: "ジャズをよく聴く",
-        timestampIso: "2026-08-01T00:00:00.000Z",
-      },
-      {
-        role: "assistant" as const,
-        content: "覚えておきます",
-        timestampIso: "2026-08-01T00:00:00.000Z",
-      },
-    ],
-  };
-  const recentTurns = Array.from({ length: 12 }, (_, index) => ({
-    ...base!,
-    createdAtIso: `2026-09-01T00:${index.toString().padStart(2, "0")}:00.000Z`,
-    messages: [
-      {
-        role: "user" as const,
-        content: `recent topic ${index}`,
-        timestampIso: `2026-09-01T00:${index.toString().padStart(2, "0")}:00.000Z`,
-      },
-    ],
-  }));
-  let analyzerInput = "";
-  const service = createConversationAnalysisService({
-    reader: {
-      listRecentTurnRecords: async ({ limit }) =>
-        [oldMusicTurn, ...recentTurns].slice(-limit),
-    },
-    model: {
-      generateJson: async <T>(_systemPrompt: string, userPrompt: string) => {
-        analyzerInput = userPrompt;
-        return {
-          currentTopic: "recent topic 11",
-          currentTopicReason: "the latest human turn establishes it",
-          currentTopicStatus: "active",
-          currentTopicStatusReason: "the latest topic is ongoing",
-          reason: "bounded history",
-          conversationTrigger: "ineligible",
-          conversationTriggerReason: "the current topic is active",
-        } as T;
-      },
-    },
-  });
-
-  await service.analyze({
-    botId: "ao",
-    threadId: "shared-thread",
-    currentContext: "続きを話そう",
-  });
-
-  expect(analyzerInput).toContain("recent topic 11");
-  expect(analyzerInput).not.toContain("ジャズをよく聴く");
 });

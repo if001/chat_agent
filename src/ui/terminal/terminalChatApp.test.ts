@@ -60,7 +60,6 @@ test("still returns answer when turn recording fails", async () => {
 test("keeps the system prompt static and does not prefetch policy context", async () => {
   const runtime = new RuntimeStub();
   const policyInputs: string[] = [];
-  let analysisCalls = 0;
   const builder = new RequestContextBuilder(
     emptyUserMemoryStore,
     emptyDailyEventRepository,
@@ -71,17 +70,6 @@ test("keeps the system prompt static and does not prefetch policy context", asyn
       },
     },
     () => new Date("2026-09-02T00:00:00.000Z"),
-    {
-      analyze: async () => {
-        analysisCalls += 1;
-        return {
-          focus: null,
-          reason: "test",
-          conversationTrigger: "ineligible",
-          conversationTriggerReason: "test",
-        };
-      },
-    },
   );
   const app = new TerminalChatApp(
     identity,
@@ -99,7 +87,6 @@ test("keeps the system prompt static and does not prefetch policy context", asyn
   expect(runtime.requests[0]?.requestContext).not.toContain("PolicyCard");
   expect(runtime.requests[1]?.requestContext).not.toContain("PolicyCard");
   expect(policyInputs).toEqual([]);
-  expect(analysisCalls).toBe(2);
 });
 
 test("still returns answer when request context resolver fails", async () => {
@@ -120,26 +107,13 @@ test("still returns answer when request context resolver fails", async () => {
   expect(runtime.requests[0]?.requestContext).toBeUndefined();
 });
 
-test("builds time, origin, and focus context without prefetched memory", async () => {
+test("builds time and origin context without prefetched memory or focus", async () => {
   const runtime = new RuntimeStub();
   const builder = new RequestContextBuilder(
     userMemoryStore,
     dailyEventRepository,
     { load: async () => "use explicit constraints" },
     () => new Date("2026-09-02T00:00:00.000Z"),
-    {
-      analyze: async () => ({
-        focus: {
-          currentTopic: "terminal integration",
-          currentTopicReason: "the terminal request establishes the topic",
-          currentTopicStatus: "active",
-          currentTopicStatusReason: "the terminal topic is active",
-        },
-        reason: "test focus",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: "test focus",
-      }),
-    },
   );
   const app = new TerminalChatApp(
     identity,
@@ -156,7 +130,7 @@ test("builds time, origin, and focus context without prefetched memory", async (
   expect(context).not.toContain("prefers concise answers");
   expect(context).not.toContain("2026-09-03: release day");
   expect(context).not.toContain("use explicit constraints");
-  expect(context).toContain("currentTopic: terminal integration");
+  expect(context).not.toContain("Conversation Focus");
 });
 
 test("passes stable trusted terminal identity and thread on every turn", async () => {

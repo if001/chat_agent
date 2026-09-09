@@ -8,10 +8,7 @@ import {
 import { QueueWorker } from "../../queue/queueWorker";
 import { formatAgentUserInput } from "../agentUserInput";
 import { TurnRecordInput } from "../../infrastructure/memory/memorySystemClient";
-import {
-  ConversationAnalysis,
-  ConversationFocus,
-} from "../../infrastructure/agent/conversationFocus";
+import type { ConversationOpportunityAssessment } from "@chat-agent/simple-pomdp-system";
 import {
   ResponseInputEnvelope,
   responseInputEnvelopeFromQueueTask,
@@ -51,18 +48,18 @@ export class DiscordBotApp {
       currentContext: string;
       kind: "human" | "conversation" | "proactive" | "delegation";
       proactiveEvidence?: string;
-      conversationFocus?: ConversationFocus | null;
     }) => Promise<string | undefined>,
     private readonly resolveConversationTopic?: (input: {
       botId: string;
       threadId: string;
       userId: string;
     }) => Promise<ConversationTopicPlan | null>,
-    private readonly resolveConversationAnalysis?: (input: {
+    private readonly resolveConversationOpportunity?: (input: {
       botId: string;
       threadId: string;
+      userId: string;
       currentContext: string;
-    }) => Promise<ConversationAnalysis>,
+    }) => Promise<ConversationOpportunityAssessment>,
     private readonly resolvePendingInteraction?: (input: {
       botId: string;
       threadId: string;
@@ -131,12 +128,10 @@ export class DiscordBotApp {
         return;
       }
       this.sendTypingBestEffort(task.channelId);
-      const conversationAnalysis = await this.analyzeConversation(task);
       const pendingInteractionId = await this.findPendingInteraction(task);
       const conversationTopic = await this.planConversationTopic(
         task,
         pendingInteractionId,
-        conversationAnalysis,
       );
       const requestContext = await this.buildRequestContext(
         task.userId,
@@ -144,7 +139,6 @@ export class DiscordBotApp {
         task.text,
         conversationTopic ? "conversation" : "human",
         conversationTopic?.text,
-        conversationAnalysis.focus,
       );
       const envelope = responseInputEnvelopeFromQueueTask(
         this.identity.botId,
@@ -247,19 +241,24 @@ export class DiscordBotApp {
   private async planConversationTopic(
     task: MentionQueueTask,
     pendingInteractionId: string | null,
-    conversationAnalysis: ConversationAnalysis,
   ): Promise<ConversationTopicPlan | null> {
     if (
       !this.resolveConversationTopic ||
-      pendingInteractionId !== null ||
-      conversationAnalysis.conversationTrigger !== "eligible"
+      !this.resolveConversationOpportunity ||
+      pendingInteractionId !== null
     ) {
       return null;
     }
     try {
-      if (conversationAnalysis.focus?.currentTopicStatus === "active") {
+      const opportunity = await this.resolveConversationOpportunity({
+        botId: this.identity.botId,
+        threadId: task.targetThreadId,
+        userId: task.userId,
+        currentContext: task.text,
+      });
+      if (opportunity.kind === "skip") {
         this.logInfo(
-          `conversation topic skipped threadId=${task.targetThreadId} reason=active_focus`,
+          `conversation topic skipped threadId=${task.targetThreadId} reason=${opportunity.reason}`,
         );
         return null;
       }
@@ -275,38 +274,6 @@ export class DiscordBotApp {
         `[simple-pomdp-error] conversation trigger failed: ${message}\n`,
       );
       return null;
-    }
-  }
-
-  private async analyzeConversation(
-    task: MentionQueueTask,
-  ): Promise<ConversationAnalysis> {
-    if (!this.resolveConversationAnalysis) {
-      return {
-        focus: null,
-        reason: "conversation analyzer is not configured",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: "conversation analyzer is not configured",
-      };
-    }
-    try {
-      return await this.resolveConversationAnalysis({
-        botId: this.identity.botId,
-        threadId: task.targetThreadId,
-        currentContext: task.text,
-      });
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? (error.stack ?? error.message) : String(error);
-      process.stdout.write(
-        `[conversation-analysis-error] analysis failed: ${message}\n`,
-      );
-      return {
-        focus: null,
-        reason: "conversation analysis failed",
-        conversationTrigger: "ineligible",
-        conversationTriggerReason: "conversation analysis failed",
-      };
     }
   }
 
@@ -338,7 +305,6 @@ export class DiscordBotApp {
     currentContext: string,
     kind: "human" | "conversation" | "proactive" | "delegation",
     proactiveEvidence?: string,
-    conversationFocus?: ConversationFocus | null,
   ): Promise<string | undefined> {
     if (!this.resolveRequestContext) {
       return proactiveEvidence
@@ -353,7 +319,6 @@ export class DiscordBotApp {
         currentContext,
         kind,
         ...(proactiveEvidence ? { proactiveEvidence } : {}),
-        ...(conversationFocus !== undefined ? { conversationFocus } : {}),
       });
     } catch (error: unknown) {
       const message =
