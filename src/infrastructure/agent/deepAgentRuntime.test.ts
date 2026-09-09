@@ -195,3 +195,34 @@ test("persists response origin metadata when a checkpoint thread resumes", async
     },
   ]);
 });
+
+test("disables the fixed DeepAgent summarizer for each checkpoint invocation", async () => {
+  const configs: unknown[] = [];
+  const runtime = new DeepAgentRuntime(
+    {},
+    [],
+    () => ({
+      invoke: async (_input, config) => {
+        configs.push(config);
+        return { messages: [{ role: "assistant", content: "ok" }] };
+      },
+    }),
+    () => undefined,
+    () => undefined,
+  );
+
+  await runtime.respond({
+    botId: "ao",
+    userId: "u1",
+    systemPrompt: "ao personality",
+    threadId: "thread-1",
+    messages: [{ role: "user", content: "hello" }],
+  });
+
+  expect(configs).toEqual([
+    {
+      configurable: { thread_id: "ao:thread-1" },
+      context: { trigger: { tokens: Number.MAX_SAFE_INTEGER } },
+    },
+  ]);
+});

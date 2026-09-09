@@ -16,7 +16,10 @@ interface DeepAgentInvoker {
         content: string;
       }>;
     },
-    config: { configurable: { thread_id: string } },
+    config: {
+      configurable: { thread_id: string };
+      context?: { trigger: { tokens: number } };
+    },
   ): Promise<{ messages?: unknown[] }>;
 }
 
@@ -60,7 +63,12 @@ export class DeepAgentRuntime implements AgentRuntime {
       () =>
         agent.invoke(
           { messages },
-          { configurable: { thread_id: threadKey } },
+          {
+            configurable: { thread_id: threadKey },
+            // DeepAgent 1.7 installs a fixed 170k-token summarizer. Disable that
+            // instance so the interaction-aware middleware is the sole owner.
+            context: { trigger: { tokens: Number.MAX_SAFE_INTEGER } },
+          },
         ),
     );
     const assistantMessage = extractLastAssistantMessage(result.messages ?? []);

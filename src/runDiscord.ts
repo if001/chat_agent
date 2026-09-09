@@ -21,6 +21,7 @@ import { createCustomTools } from "./infrastructure/agent/customTools";
 import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
 import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
+import { createCheckpointSummarizationMiddleware } from "./infrastructure/agent/checkpointSummarization";
 import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
@@ -55,6 +56,7 @@ const main = async (): Promise<void> => {
     store?: unknown;
     backend?: unknown;
     skills?: string[];
+    middleware?: unknown[];
   }) => {
     invoke(
       input: {
@@ -83,6 +85,14 @@ const main = async (): Promise<void> => {
         env.ollamaApiKey,
       )
     : createOllamaChatModel(env.ollamaBaseUrl, env.ollamaChatModel);
+  const checkpointSummarizationMiddleware =
+    createCheckpointSummarizationMiddleware({
+      model: chatModel,
+      contextWindowTokens: env.deepAgentContextWindowTokens,
+      triggerFraction: env.deepAgentSummarizationTriggerFraction,
+      recentInteractions: env.deepAgentRecentInteractions,
+      toolResultMaxChars: env.deepAgentToolResultMaxChars,
+    });
 
   const pool = createPostgresPool(env.postgresUrl);
   const db = createDrizzleClient(pool);
@@ -177,6 +187,7 @@ const main = async (): Promise<void> => {
         ...(st ? { store: st } : {}),
         backend: new deepagents.FilesystemBackend({ rootDir: process.cwd() }),
         skills: env.deepAgentSkillsSources,
+        middleware: [checkpointSummarizationMiddleware],
       }),
     () => store,
     () => checkpointer,
