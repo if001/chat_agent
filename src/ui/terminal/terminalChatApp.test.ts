@@ -57,7 +57,7 @@ test("still returns answer when turn recording fails", async () => {
   expect(result).toBe("terminal answer");
 });
 
-test("passes fresh policy context per turn while keeping the system prompt static", async () => {
+test("keeps the system prompt static and does not prefetch policy context", async () => {
   const runtime = new RuntimeStub();
   const policyInputs: string[] = [];
   let analysisCalls = 0;
@@ -96,13 +96,9 @@ test("passes fresh policy context per turn while keeping the system prompt stati
     identity.systemPrompt,
     identity.systemPrompt,
   ]);
-  expect(runtime.requests[0]?.requestContext).toContain(
-    "## Bot-specific PolicyCard\npolicy: first",
-  );
-  expect(runtime.requests[1]?.requestContext).toContain(
-    "## Bot-specific PolicyCard\npolicy: second",
-  );
-  expect(policyInputs).toEqual(["first", "second"]);
+  expect(runtime.requests[0]?.requestContext).not.toContain("PolicyCard");
+  expect(runtime.requests[1]?.requestContext).not.toContain("PolicyCard");
+  expect(policyInputs).toEqual([]);
   expect(analysisCalls).toBe(2);
 });
 
@@ -124,7 +120,7 @@ test("still returns answer when request context resolver fails", async () => {
   expect(runtime.requests[0]?.requestContext).toBeUndefined();
 });
 
-test("builds shared memory, daily event, time, policy, and focus context", async () => {
+test("builds time, origin, and focus context without prefetched memory", async () => {
   const runtime = new RuntimeStub();
   const builder = new RequestContextBuilder(
     userMemoryStore,
@@ -156,9 +152,10 @@ test("builds shared memory, daily event, time, policy, and focus context", async
 
   const context = runtime.requests[0]?.requestContext;
   expect(context).toContain("Current time: 2026-09-02T00:00:00.000Z");
-  expect(context).toContain("prefers concise answers");
+  expect(context).toContain("Input origin: human");
+  expect(context).not.toContain("prefers concise answers");
   expect(context).not.toContain("2026-09-03: release day");
-  expect(context).toContain("use explicit constraints");
+  expect(context).not.toContain("use explicit constraints");
   expect(context).toContain("currentTopic: terminal integration");
 });
 

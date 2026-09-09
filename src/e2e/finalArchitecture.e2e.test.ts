@@ -130,7 +130,7 @@ const findTool = (
   return selected;
 };
 
-test("fixed long conversation preserves corrections, chronology, focus, and bot scope", async () => {
+test("fixed long conversation preserves focus without eager memory injection", async () => {
   const userMemoryStore = new FixtureUserMemoryStore();
   const dailyEventRepository = new FixtureDailyEvents();
   const tools = createCustomTools({
@@ -224,13 +224,12 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     });
   const [aoContext, akaContext] = await Promise.all([build("ao"), build("aka")]);
 
-  expect(aoContext).toContain("詳しい回答を好む");
-  expect(akaContext).toContain("詳しい回答を好む");
+  expect(aoContext).not.toContain("詳しい回答を好む");
+  expect(akaContext).not.toContain("詳しい回答を好む");
   expect(aoContext).not.toContain("簡潔な回答を好む");
-  expect(aoContext.indexOf("CIの原因調査を再開した")).toBeLessThan(
-    aoContext.indexOf("release 1.0を公開した"),
-  );
-  expect(aoContext).toContain("ao-only policy");
+  expect(aoContext).not.toContain("CIの原因調査を再開した");
+  expect(aoContext).not.toContain("release 1.0を公開した");
+  expect(aoContext).not.toContain("ao-only policy");
   expect(aoContext).toContain(
     "currentTopicReason: the user explicitly returns to the CI investigation",
   );
@@ -238,9 +237,9 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     "agentCommitmentReason: the assistant said it would inspect and report the logs",
   );
   expect(aoContext).not.toContain("aka-only policy");
-  expect(akaContext).toContain("aka-only policy");
+  expect(akaContext).not.toContain("aka-only policy");
   expect(akaContext).not.toContain("ao-only policy");
-  expect(policyInputs.sort()).toEqual(["aka", "ao"]);
+  expect(policyInputs).toEqual([]);
 
   const focus = await conversationAnalysisService.analyze({
     botId: "ao",
@@ -347,9 +346,9 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
     "ao:shared-thread",
     "aka:shared-thread",
   ]);
-  expect(invocationContexts[0]).toContain("ao-only policy");
+  expect(invocationContexts[0]).not.toContain("ao-only policy");
   expect(invocationContexts[0]).not.toContain("aka-only policy");
-  expect(invocationContexts[1]).toContain("aka-only policy");
+  expect(invocationContexts[1]).not.toContain("aka-only policy");
   expect(invocationContexts[1]).not.toContain("ao-only policy");
 });
 

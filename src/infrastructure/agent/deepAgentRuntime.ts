@@ -19,6 +19,7 @@ interface DeepAgentInvoker {
     config: {
       configurable: { thread_id: string };
       context?: { trigger: { tokens: number } };
+      recursionLimit?: number;
     },
   ): Promise<{ messages?: unknown[] }>;
 }
@@ -48,6 +49,7 @@ export class DeepAgentRuntime implements AgentRuntime {
   async respond(request: AgentRequest): Promise<AgentResponse> {
     const agent = this.getOrCreateAgent(request.botId, request.systemPrompt);
     const threadKey = `${request.botId}:${request.threadId ?? request.botId}`;
+    const runtimeThreadId = request.threadId ?? request.botId;
     const messages = request.requestContext
       ? [
           { role: "system" as const, content: request.requestContext },
@@ -58,7 +60,7 @@ export class DeepAgentRuntime implements AgentRuntime {
       {
         botId: request.botId,
         userId: request.userId,
-        threadId: threadKey,
+        threadId: runtimeThreadId,
       },
       () =>
         agent.invoke(
@@ -68,6 +70,8 @@ export class DeepAgentRuntime implements AgentRuntime {
             // DeepAgent 1.7 installs a fixed 170k-token summarizer. Disable that
             // instance so the interaction-aware middleware is the sole owner.
             context: { trigger: { tokens: Number.MAX_SAFE_INTEGER } },
+            // Bound model/tool cycles so failed retrieval cannot loop indefinitely.
+            recursionLimit: 12,
           },
         ),
     );

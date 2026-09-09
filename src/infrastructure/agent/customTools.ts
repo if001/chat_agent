@@ -16,6 +16,8 @@ export interface CustomToolDeps {
     | "searchUserNotes"
     | "replaceUserNote"
     | "deleteUserNote"
+    | "inspectCatalog"
+    | "searchMemory"
   >;
   dailyEventClient?: Pick<
     MemorySystemClient,
@@ -41,6 +43,142 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     }
     return deps.dailyEventClient;
   };
+
+  const trustedScope = () => {
+    const context = deps.runtimeContext.current();
+    return {
+      botId: context.botId,
+      threadId: context.threadId,
+      userId: context.userId,
+    };
+  };
+
+  const searchMemory = async (
+    input: Parameters<MemorySystemClient["searchMemory"]>[0],
+    resultKey: "conversationHistory" | "userMemory" | "policyCards",
+  ) => {
+    try {
+      const result = await retryTransient(() =>
+        deps.userMemoryClient.searchMemory(input),
+      );
+      return result[resultKey] ?? {
+        status: "unavailable",
+        reason: `${resultKey} result was omitted`,
+      };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        reason: error instanceof Error ? error.message : "Memory search failed",
+      };
+    }
+  };
+
+  const inspectContextCatalogTool = tool(
+    async ({ query }: { query?: string }) => {
+      const scope = trustedScope();
+      const [memory, knowledge] = await Promise.all([
+        loadCatalog(
+          () =>
+            deps.userMemoryClient.inspectCatalog({
+              ...scope,
+              ...(query?.trim() ? { query: query.trim() } : {}),
+            }),
+          "memory catalog",
+        ),
+        loadCatalog(
+          () => deps.knowledgeAccessService.inspectCatalog(),
+          "knowledge catalog",
+        ),
+      ]);
+      return JSON.stringify({ memory, knowledge });
+    },
+    {
+      name: "inspect_context_catalog",
+      description:
+        "Lists lightweight topic hints for available memories and saved knowledge. Use it before detailed retrieval when past context may matter; it does not return memory bodies.",
+      schema: schemaCompat(
+        z.object({ query: z.string().max(500).optional() }),
+      ) as never,
+    },
+  );
+
+  const searchConversationMemoryTool = tool(
+    async ({ query, limit }: { query: string; limit?: number }) => {
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["conversation_history"],
+          limits: { conversation_history: limit ?? 5 },
+        },
+        "conversationHistory",
+      );
+      return JSON.stringify(result);
+    },
+    {
+      name: "search_conversation_memory",
+      description:
+        "Searches older related conversation excerpts after catalog inspection. Runtime identity scope is applied automatically.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().min(1).max(500),
+          limit: z.number().int().min(1).max(10).default(5),
+        }),
+      ) as never,
+    },
+  );
+
+  const searchUserMemoryTool = tool(
+    async ({ query, limit }: { query: string; limit?: number }) => {
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["user_memory"],
+          limits: { user_memory: limit ?? 5 },
+        },
+        "userMemory",
+      );
+      return JSON.stringify(result);
+    },
+    {
+      name: "search_user_memory",
+      description:
+        "Searches durable user preferences, constraints, attributes, and ongoing assumptions. Runtime user scope is automatic.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().min(1).max(500),
+          limit: z.number().int().min(1).max(10).default(5),
+        }),
+      ) as never,
+    },
+  );
+
+  const searchResponsePoliciesTool = tool(
+    async ({ query, limit }: { query: string; limit?: number }) => {
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["policy_cards"],
+          limits: { policy_cards: Math.min(limit ?? 3, 3) },
+        },
+        "policyCards",
+      );
+      return JSON.stringify(result);
+    },
+    {
+      name: "search_response_policies",
+      description:
+        "Searches bot-specific procedural response guidance. Runtime bot and thread scope is automatic.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().min(1).max(500),
+          limit: z.number().int().min(1).max(3).default(3),
+        }),
+      ) as never,
+    },
+  );
 
   const webListTool = tool(
     async ({ query, k }: { query: string; k: number }) => {
@@ -270,14 +408,35 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       toDate?: string;
     }) => {
       const dailyEventClient = requireDailyEventClient();
-      const results = await dailyEventClient.searchDailyEvents({
-        userId: deps.runtimeContext.current().userId,
-        query,
-        ...(limit ? { limit } : {}),
-        ...(fromDate ? { from: fromDate } : {}),
-        ...(toDate ? { to: toDate } : {}),
-      });
-      return JSON.stringify(results);
+      try {
+        const results = await retryTransient(() =>
+          dailyEventClient.searchDailyEvents({
+            userId: deps.runtimeContext.current().userId,
+            query,
+            limit: Math.min(limit ?? 5, 10),
+            ...(fromDate ? { from: fromDate } : {}),
+            ...(toDate ? { to: toDate } : {}),
+          }),
+        );
+        return JSON.stringify(
+          results.length > 0
+            ? {
+                status: "found",
+                data: results.slice(0, 10).map((event) => ({
+                  eventId: event.id,
+                  eventDate: event.eventDate,
+                  summary: event.summary,
+                })),
+              }
+            : { status: "not_found" },
+        );
+      } catch (error) {
+        return JSON.stringify({
+          status: "unavailable",
+          reason:
+            error instanceof Error ? error.message : "DailyEvent search failed",
+        });
+      }
     },
     {
       name: "search_daily_events",
@@ -365,6 +524,10 @@ export const createCustomTools = (deps: CustomToolDeps) => {
   );
 
   return [
+    inspectContextCatalogTool,
+    searchConversationMemoryTool,
+    searchUserMemoryTool,
+    searchResponsePoliciesTool,
     webListTool,
     webPageTool,
     saveWebKnowledgeTool,
@@ -390,6 +553,30 @@ const retryTransient = async <T>(operation: () => Promise<T>): Promise<T> => {
       throw error;
     }
     return operation();
+  }
+};
+
+const loadCatalog = async <T>(
+  load: () => Promise<T>,
+  label: string,
+): Promise<
+  | T
+  | {
+      status: "unavailable";
+      available: false;
+      topics: never[];
+      reason: string;
+    }
+> => {
+  try {
+    return await load();
+  } catch (error) {
+    return {
+      status: "unavailable",
+      available: false,
+      topics: [],
+      reason: error instanceof Error ? error.message : `${label} failed`,
+    };
   }
 };
 

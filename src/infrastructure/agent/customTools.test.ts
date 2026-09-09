@@ -18,6 +18,15 @@ import { AgentRuntimeContext } from "./runtimeContext";
 class KnowledgeAccessServiceStub implements KnowledgeAccessService {
   public savedWebKnowledgeInput: { botId: string; threadId?: string; url: string } | null = null;
 
+  async inspectCatalog() {
+    return {
+      status: "available" as const,
+      available: true,
+      topics: ["shared agents article"],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
   async searchSavedKnowledge(_input: {
     query: string;
     limit?: number;
@@ -90,6 +99,37 @@ class MemoryStoreStub {
   public readonly userIds: string[] = [];
   public readonly replacedIds: number[] = [];
   public readonly deletedIds: number[] = [];
+  public readonly searchRequests: unknown[] = [];
+
+  async inspectCatalog(input: { botId: string; threadId: string; userId: string }) {
+    return {
+      status: "available" as const,
+      conversationHistory: { status: "available" as const, available: true, topics: [input.threadId] },
+      userMemory: { status: "available" as const, available: true, topics: [input.userId] },
+      dailyEvents: { status: "empty" as const, available: false, topics: [] },
+      policyCards: { status: "available" as const, available: true, topics: [input.botId] },
+    };
+  }
+
+  async searchMemory(input: {
+    botId: string;
+    threadId: string;
+    userId: string;
+    scopes: string[];
+  }) {
+    this.searchRequests.push(input);
+    return {
+      ...(input.scopes.includes("conversation_history")
+        ? { conversationHistory: { status: "found" as const, data: [{ turnRecordId: "turn-1", occurredAt: "2026-01-01T00:00:00.000Z", excerpt: "jazz discussion" }] } }
+        : {}),
+      ...(input.scopes.includes("user_memory")
+        ? { userMemory: { status: "found" as const, data: [{ noteId: 1, note: "prefers jazz" }] } }
+        : {}),
+      ...(input.scopes.includes("policy_cards")
+        ? { policyCards: { status: "not_found" as const } }
+        : {}),
+    };
+  }
 
   async rememberUserNote(userId: string, note: string) {
     this.userIds.push(userId);
@@ -326,6 +366,10 @@ test("registers one canonical tool for each UserMemory operation", () => {
   const names = createCustomTools(createDeps()).map((candidate) => candidate.name);
 
   expect(names).toEqual([
+    "inspect_context_catalog",
+    "search_conversation_memory",
+    "search_user_memory",
+    "search_response_policies",
     "web_list",
     "web_page",
     "save_web_knowledge",
@@ -436,8 +480,72 @@ test("search_daily_events returns matching records", async () => {
   const tools = createCustomTools(createDeps());
 
   const result = await findTool(tools, "search_daily_events").invoke({ query: "queue" });
-  const parsed = JSON.parse(result as string) as DailyEvent[];
-  expect(parsed[0]?.summary).toContain("queue");
+  const parsed = JSON.parse(result as string) as { status: string; data: DailyEvent[] };
+  expect(parsed.status).toBe("found");
+  expect(parsed.data[0]?.summary).toContain("queue");
+});
+
+test("memory discovery tools inject trusted runtime scope and expose no identity arguments", async () => {
+  const deps = createDeps();
+  const runtime = new AgentRuntimeContext();
+  const tools = createCustomTools({ ...deps, runtimeContext: runtime });
+  for (const name of [
+    "inspect_context_catalog",
+    "search_conversation_memory",
+    "search_user_memory",
+    "search_daily_events",
+    "search_response_policies",
+  ]) {
+    const candidate = findTool(tools, name) as {
+      schema?: { shape?: Record<string, unknown> };
+      invoke(input: unknown): Promise<unknown>;
+    };
+    expect(candidate.schema?.shape).not.toHaveProperty("botId");
+    expect(candidate.schema?.shape).not.toHaveProperty("threadId");
+    expect(candidate.schema?.shape).not.toHaveProperty("userId");
+  }
+
+  const catalog = await runtime.run(
+    { botId: "aka", threadId: "discord-thread", userId: "user-42" },
+    () => findTool(tools, "inspect_context_catalog").invoke({ query: "music" }),
+  );
+  const parsedCatalog = JSON.parse(catalog as string);
+  expect(parsedCatalog.memory.conversationHistory.topics).toEqual(["discord-thread"]);
+  expect(parsedCatalog.memory.userMemory.topics).toEqual(["user-42"]);
+
+  await runtime.run(
+    { botId: "aka", threadId: "discord-thread", userId: "user-42" },
+    () => findTool(tools, "search_user_memory").invoke({ query: "music" }),
+  );
+  expect(deps.userMemoryStore.searchRequests[0]).toMatchObject({
+    botId: "aka",
+    threadId: "discord-thread",
+    userId: "user-42",
+    scopes: ["user_memory"],
+  });
+});
+
+test("memory search preserves not_found and converts repeated backend failure to unavailable", async () => {
+  const deps = createDeps();
+  const tools = createCustomTools(deps);
+  const notFound = JSON.parse(
+    (await findTool(tools, "search_response_policies").invoke({ query: "hello" })) as string,
+  );
+  expect(notFound).toEqual({ status: "not_found" });
+
+  let calls = 0;
+  deps.userMemoryStore.searchMemory = async () => {
+    calls += 1;
+    throw new Error("503 memory backend unavailable");
+  };
+  const unavailable = JSON.parse(
+    (await findTool(tools, "search_user_memory").invoke({ query: "music" })) as string,
+  );
+  expect(unavailable).toEqual({
+    status: "unavailable",
+    reason: "503 memory backend unavailable",
+  });
+  expect(calls).toBe(2);
 });
 
 test("get_daily_events_by_date returns nearby records", async () => {

@@ -189,3 +189,34 @@ test("routes DailyEvent operations through the memory-system service", async () 
     { userId: "shared-user", date: "2026-09-09" },
   ]);
 });
+
+test("catalog and scoped search preserve unavailable when the service cannot load", async () => {
+  const client = createMemorySystemClient(
+    {
+      postgresUrl: "postgres://example.invalid",
+      ollamaBaseUrl: "http://ollama.invalid",
+      ollamaModel: "stub",
+    },
+    () => null,
+  );
+
+  const catalog = await client.inspectCatalog({
+    botId: "ao",
+    threadId: "thread-1",
+    userId: "user-1",
+  });
+  const result = await client.searchMemory({
+    botId: "ao",
+    threadId: "thread-1",
+    userId: "user-1",
+    query: "music",
+    scopes: ["user_memory"],
+  });
+
+  expect(catalog.status).toBe("unavailable");
+  expect(catalog.userMemory.status).toBe("unavailable");
+  expect(result.userMemory).toEqual({
+    status: "unavailable",
+    reason: "memory-system is unavailable",
+  });
+});
