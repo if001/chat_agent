@@ -1,24 +1,5 @@
 #!/bin/bash
 
-REQUIRED_NODE_MAJOR=23
-CURRENT_NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || printf '0')
-
-if (( CURRENT_NODE_MAJOR < REQUIRED_NODE_MAJOR )); then
-    USER_HOME_DIR=$(getent passwd "$(id -u)" | cut -d: -f6)
-    NVM_SCRIPT_PATH="${USER_HOME_DIR}/.nvm/nvm.sh"
-    if [[ -s "$NVM_SCRIPT_PATH" ]]; then
-        # shellcheck source=/dev/null
-        source "$NVM_SCRIPT_PATH"
-        nvm use --silent "$REQUIRED_NODE_MAJOR" >/dev/null
-        CURRENT_NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
-    fi
-fi
-
-if (( CURRENT_NODE_MAJOR < REQUIRED_NODE_MAJOR )); then
-    echo "Node.js ${REQUIRED_NODE_MAJOR}以上が必要です（現在: $(node --version 2>/dev/null || printf '未検出')）" >&2
-    exit 1
-fi
-
 RED=$(printf '\033[0;31m')
 GREEN=$(printf '\033[0;32m')
 YELLOW=$(printf '\033[0;33m')
@@ -56,7 +37,7 @@ FORCE_COLOR=1 npm run start:ao 2>&1 | colorize "$BLUE" "AO" &
 FORCE_COLOR=1 npm run start:aka 2>&1 | colorize "$RED" "AKA" &
 FORCE_COLOR=1 npm run start:ingest 2>&1 | colorize "$YELLOW" "ingest" &
 FORCE_COLOR=1 npm run start:memory 2>&1 | colorize "$CYAN" "memory" &
-FORCE_COLOR=1 npm run start:simple-pomdp 2>&1 | colorize "$GREEN" "pomdp" &
+FORCE_COLOR=1 npm run start:simple-pomdp 2>&1 | colorize "$GREEN" "pomdp"
 
 # FORCE_COLOR=1 cd packages/memory-system && npm run start:background 2>&1 | colorize "$CYAN" "memory" &
 # FORCE_COLOR=1 cd packages/simple-pomdp-system && npm run start:background 2>&1 | colorize "$GREEN" "pomdp" &
