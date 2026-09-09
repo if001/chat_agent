@@ -133,13 +133,9 @@ export const createMemorySystemClient = (
         process.stdout.write(
           `[memory-ingest] recorded botId=${input.botId} threadId=${input.threadId} messages=${input.messages.length}\n`,
         );
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error
-            ? (error.stack ?? error.message)
-            : String(error);
+      } catch {
         process.stdout.write(
-          `[memory-ingest] failed botId=${input.botId} threadId=${input.threadId}: ${message}\n`,
+          `[memory-ingest] failed botId=${input.botId} threadId=${input.threadId}\n`,
         );
       }
     },
@@ -262,11 +258,9 @@ const loadMemorySystemService = (
       ollamaModel: options.ollamaModel,
       ollamaAPIKey: options.ollamaApiKey ?? "",
     });
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? (error.stack ?? error.message) : String(error);
+  } catch {
     process.stdout.write(
-      `[memory-system] failed to load package; memory ingest is disabled: ${message}\n`,
+      "[memory-system] failed to load package; memory ingest is disabled\n",
     );
     return null;
   }

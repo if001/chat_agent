@@ -40,6 +40,8 @@ test("removed packages, stores, fields, scores, and compatibility paths stay abs
     ["attempt", "Count"].join(""),
     ["positive", "Count"].join(""),
     ["negative", "Count"].join(""),
+    ["Conversation", "Analysis"].join(""),
+    ["Conversation", "Focus"].join(""),
   ];
 
   for (const symbol of removedSymbols) {
@@ -63,4 +65,16 @@ test("removed packages, stores, fields, scores, and compatibility paths stay abs
       ),
     ),
   ).toBe(false);
+});
+
+test("Discord operational packages contain no payload-level debug logging", () => {
+  const operationalPackages = [
+    collectSource("packages/memory-system/src"),
+    collectSource("packages/simple-pomdp-system/src"),
+  ].join("\n");
+
+  expect(operationalPackages).not.toContain("console.log(");
+  expect(operationalPackages).not.toContain("base episode");
+  expect(operationalPackages).not.toContain("detail=${");
+  expect(operationalPackages).not.toContain("reason: ${decision.reason}");
 });
