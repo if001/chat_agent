@@ -22,7 +22,6 @@ import { AgentRuntimeContext } from "./infrastructure/agent/runtimeContext";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
 import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
 import { createCheckpointSummarizationMiddleware } from "./infrastructure/agent/checkpointSummarization";
-import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
@@ -102,7 +101,6 @@ const main = async (): Promise<void> => {
   );
   const repository = new PostgresKnowledgeRepository(db, embeddingProvider);
 
-  const dailyEventRepository = new PostgresDailyEventRepository(db);
   const memoryClient = createMemorySystemClient({
     postgresUrl: env.postgresUrl,
     ollamaBaseUrl: env.ollamaBaseUrl,
@@ -146,7 +144,7 @@ const main = async (): Promise<void> => {
   const tools = createCustomTools({
     knowledgeAccessService,
     userMemoryClient: memoryClient,
-    dailyEventRepository,
+    dailyEventClient: memoryClient,
     botId: identity.botId,
     runtimeContext,
     enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
@@ -263,7 +261,7 @@ const main = async (): Promise<void> => {
   });
   const requestContextBuilder = new RequestContextBuilder(
     memoryClient,
-    dailyEventRepository,
+    memoryClient,
     {
       load: async ({ botId, threadId, currentContext }) => {
         const cards = await memoryClient.queryApplicablePolicyCards({

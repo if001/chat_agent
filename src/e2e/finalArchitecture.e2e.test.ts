@@ -1,9 +1,9 @@
 import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import {
   DailyEvent,
-  DailyEventRepository,
-} from "../core/types";
-import { MemoryUserNote } from "../infrastructure/memory/memorySystemClient";
+  MemorySystemClient,
+  MemoryUserNote,
+} from "../infrastructure/memory/memorySystemClient";
 import {
   createConversationAnalysisService,
 } from "../infrastructure/agent/conversationFocus";
@@ -61,7 +61,13 @@ class FixtureUserMemoryStore {
   }
 }
 
-class FixtureDailyEvents implements DailyEventRepository {
+class FixtureDailyEvents
+  implements
+    Pick<
+      MemorySystemClient,
+      "rememberDailyEvent" | "searchDailyEvents" | "getDailyEventsByDate"
+    >
+{
   private readonly events: DailyEvent[] = [
     {
       id: 1,
@@ -130,7 +136,7 @@ test("fixed long conversation preserves corrections, chronology, focus, and bot 
   const tools = createCustomTools({
     knowledgeAccessService,
     userMemoryClient: userMemoryStore,
-    dailyEventRepository,
+    dailyEventClient: dailyEventRepository,
     botId: "ao",
     runtimeContext: {
       current: () => ({

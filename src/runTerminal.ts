@@ -10,7 +10,6 @@ import { loadEnv } from "./config/env";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
 import {
-  createDrizzleClient,
   createPostgresPool,
 } from "@chat-agent/knowledge-access";
 import {
@@ -18,7 +17,6 @@ import {
   formatPolicyCardsForPrompt,
 } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
-import { PostgresDailyEventRepository } from "./infrastructure/daily-events/postgresDailyEventRepository";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
 import { createConversationAnalysisService } from "./infrastructure/agent/conversationFocus";
 import { createPostgresTurnRecordReader } from "@chat-agent/memory-system";
@@ -84,7 +82,6 @@ const main = async (): Promise<void> => {
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
   const pool = createPostgresPool(env.postgresUrl);
-  const db = createDrizzleClient(pool);
   const turnRecordReader = createPostgresTurnRecordReader(env.postgresUrl);
   const conversationAnalysisService = createConversationAnalysisService({
     reader: turnRecordReader,
@@ -96,7 +93,7 @@ const main = async (): Promise<void> => {
   });
   const requestContextBuilder = new RequestContextBuilder(
     memoryClient,
-    new PostgresDailyEventRepository(db),
+    memoryClient,
     {
       load: async ({ botId, threadId, currentContext }) => {
         const cards = await memoryClient.queryApplicablePolicyCards({

@@ -1,8 +1,7 @@
 import { createCustomTools } from "./customTools";
 import {
   DailyEvent,
-  DailyEventRepository,
-} from "../../core/types";
+} from "../memory/memorySystemClient";
 import {
   KnowledgeAccessService,
   KnowledgeAccessAnalysisModel,
@@ -129,11 +128,10 @@ class MemoryStoreStub {
   }
 }
 
-class DailyEventRepoStub implements DailyEventRepository {
+class DailyEventClientStub {
   public remembered: DailyEvent | null = null;
 
   async rememberDailyEvent(input: {
-    botId: string;
     userId: string;
     eventDate: string;
     summary: string;
@@ -142,7 +140,6 @@ class DailyEventRepoStub implements DailyEventRepository {
   }): Promise<DailyEvent> {
     this.remembered = {
       id: 1,
-      botId: input.botId,
       userId: input.userId,
       eventDate: input.eventDate,
       summary: input.summary,
@@ -157,7 +154,6 @@ class DailyEventRepoStub implements DailyEventRepository {
     return [
       {
         id: 1,
-        botId: "b1",
         userId: "u1",
         eventDate: "2026-01-02",
         summary: "queue のテストを追加した",
@@ -171,7 +167,6 @@ class DailyEventRepoStub implements DailyEventRepository {
     return [
       {
         id: 2,
-        botId: "b1",
         userId: "u1",
         eventDate: "2026-01-03",
         summary: "Dockerfile を追加した",
@@ -188,7 +183,7 @@ const createDeps = () => {
     knowledgeAccessService: new KnowledgeAccessServiceStub(),
     userMemoryClient,
     userMemoryStore: userMemoryClient,
-    dailyEventRepository: new DailyEventRepoStub(),
+    dailyEventClient: new DailyEventClientStub(),
     botId: "b1",
     runtimeContext: {
       current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),
@@ -422,7 +417,7 @@ test("explicit replacement returns the memory-system not-found result", async ()
 
 test("remember_daily_event stores concise daily record", async () => {
   const deps = createDeps();
-  const dailyEvents = deps.dailyEventRepository as DailyEventRepoStub;
+  const dailyEvents = deps.dailyEventClient as DailyEventClientStub;
   const tools = createCustomTools(deps);
 
   const result = await findTool(tools, "remember_daily_event").invoke({

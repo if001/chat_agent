@@ -7,8 +7,8 @@ import {
   AgentRequest,
   AgentRuntime,
   BotIdentity,
-  DailyEventRepository,
 } from "../../core/types";
+import { MemorySystemClient } from "../../infrastructure/memory/memorySystemClient";
 import { RequestContextBuilder } from "../../infrastructure/agent/requestContextBuilder";
 import { DeepAgentRuntime } from "../../infrastructure/agent/deepAgentRuntime";
 
@@ -280,14 +280,13 @@ const emptyUserMemoryStore = {
   searchUserNotes: async () => [],
 };
 
-const dailyEventRepository: DailyEventRepository = {
+const dailyEventRepository: Pick<MemorySystemClient, "searchDailyEvents"> = {
   rememberDailyEvent: async () => {
     throw new Error("not used");
   },
   searchDailyEvents: async () => [
     {
       id: 1,
-      botId: "shared",
       userId: TERMINAL_USER_ID,
       eventDate: "2026-09-03",
       summary: "release day",
@@ -298,7 +297,7 @@ const dailyEventRepository: DailyEventRepository = {
   getDailyEventsByDate: async () => [],
 };
 
-const emptyDailyEventRepository: DailyEventRepository = {
+const emptyDailyEventRepository: Pick<MemorySystemClient, "searchDailyEvents"> = {
   ...dailyEventRepository,
   searchDailyEvents: async () => [],
 };

@@ -1,9 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import { z } from "zod/v3";
-import {
-  DailyEventRepository,
-} from "../../core/types";
 import { TrustedAgentContext } from "./runtimeContext";
 import { MemorySystemClient } from "../memory/memorySystemClient";
 
@@ -20,7 +17,10 @@ export interface CustomToolDeps {
     | "replaceUserNote"
     | "deleteUserNote"
   >;
-  dailyEventRepository?: DailyEventRepository;
+  dailyEventClient?: Pick<
+    MemorySystemClient,
+    "rememberDailyEvent" | "searchDailyEvents" | "getDailyEventsByDate"
+  >;
   botId: string;
   runtimeContext: TrustedContextReader;
   enqueueTask?: (input: {
@@ -35,11 +35,11 @@ export interface CustomToolDeps {
 const schemaCompat = <T>(schema: T): T => schema;
 
 export const createCustomTools = (deps: CustomToolDeps) => {
-  const requireDailyEventRepository = (): DailyEventRepository => {
-    if (!deps.dailyEventRepository) {
+  const requireDailyEventClient = () => {
+    if (!deps.dailyEventClient) {
       throw new Error("daily event backend is not configured");
     }
-    return deps.dailyEventRepository;
+    return deps.dailyEventClient;
   };
 
   const webListTool = tool(
@@ -240,8 +240,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       tags?: string[];
       sourceMessage?: string;
     }) => {
-      const dailyEventRepository = requireDailyEventRepository();
-      const saved = await dailyEventRepository.rememberDailyEvent({
+      const dailyEventClient = requireDailyEventClient();
+      const saved = await dailyEventClient.rememberDailyEvent({
         userId: deps.runtimeContext.current().userId,
         eventDate,
         summary,
@@ -269,13 +269,13 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       fromDate?: string;
       toDate?: string;
     }) => {
-      const dailyEventRepository = requireDailyEventRepository();
-      const results = await dailyEventRepository.searchDailyEvents({
+      const dailyEventClient = requireDailyEventClient();
+      const results = await dailyEventClient.searchDailyEvents({
         userId: deps.runtimeContext.current().userId,
         query,
         ...(limit ? { limit } : {}),
-        ...(fromDate ? { fromDate } : {}),
-        ...(toDate ? { toDate } : {}),
+        ...(fromDate ? { from: fromDate } : {}),
+        ...(toDate ? { to: toDate } : {}),
       });
       return JSON.stringify(results);
     },
@@ -297,8 +297,8 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       windowDays?: number;
       limit?: number;
     }) => {
-      const dailyEventRepository = requireDailyEventRepository();
-      const results = await dailyEventRepository.getDailyEventsByDate({
+      const dailyEventClient = requireDailyEventClient();
+      const results = await dailyEventClient.getDailyEventsByDate({
         userId: deps.runtimeContext.current().userId,
         date,
         ...(windowDays !== undefined ? { windowDays } : {}),

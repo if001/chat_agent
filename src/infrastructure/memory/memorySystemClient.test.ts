@@ -68,3 +68,72 @@ test("routes UserMemory operations through the memory-system service", async () 
     { userId: "shared-user", noteId: 7 },
   ]);
 });
+
+test("routes DailyEvent operations through the memory-system service", async () => {
+  const calls: unknown[] = [];
+  const client = createMemorySystemClient(
+    {
+      postgresUrl: "postgres://example.invalid",
+      ollamaBaseUrl: "http://ollama.invalid",
+      ollamaModel: "stub",
+    },
+    () => ({
+      ingestTurnRecord: async () => {},
+      queryApplicablePolicyCards: async () => [],
+      rememberUserNote: async () => ({ ok: true }),
+      searchUserNotes: async () => [],
+      replaceUserNote: async () => ({ ok: true }),
+      deleteUserNote: async () => true,
+      rememberDailyEvent: async (input) => {
+        calls.push(input);
+        return {
+          id: 1,
+          userId: input.userId,
+          eventDate: input.eventDate,
+          summary: input.summary,
+          tags: input.tags ?? [],
+          createdAt: new Date("2026-09-09T00:00:00.000Z"),
+        };
+      },
+      searchDailyEvents: async (input) => {
+        calls.push(input);
+        return [];
+      },
+      getDailyEventsByDate: async (input) => {
+        calls.push(input);
+        return [];
+      },
+    }),
+  );
+
+  await client.rememberDailyEvent({
+    userId: "shared-user",
+    eventDate: "2026-09-09",
+    summary: "queue tests completed",
+  });
+  await client.searchDailyEvents({
+    userId: "shared-user",
+    query: "queue",
+    from: "2026-09-01",
+    to: "2026-09-30",
+  });
+  await client.getDailyEventsByDate({
+    userId: "shared-user",
+    date: "2026-09-09",
+  });
+
+  expect(calls).toEqual([
+    {
+      userId: "shared-user",
+      eventDate: "2026-09-09",
+      summary: "queue tests completed",
+    },
+    {
+      userId: "shared-user",
+      query: "queue",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    },
+    { userId: "shared-user", date: "2026-09-09" },
+  ]);
+});
