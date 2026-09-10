@@ -175,23 +175,40 @@ export class DiscordBotApp {
     envelope: ResponseInputEnvelope,
     requestContext?: string,
   ): Promise<void> {
+    this.logQueueDebug(
+      `runtime_start taskId=${task.id} interactionId=${task.sourceInteractionId ?? "none"} action=${task.action}`,
+    );
     const content = await runResponseInput(
       this.identity,
       this.runtime,
       envelope,
       requestContext,
     );
+    this.logQueueDebug(
+      `runtime_complete taskId=${task.id} contentLength=${content.length}`,
+    );
     if (content.length === 0) {
       this.logError(`no_reply id=${task.id} action=${task.action}`);
       return;
     }
-    if (!(await this.isCurrentConversationVersion(task))) {
+    const latestConversationVersion =
+      await this.queueApi.getLatestConversationVersion(task.targetThreadId);
+    this.logQueueDebug(
+      `version_check taskId=${task.id} taskVersion=${task.conversationVersion} latestVersion=${latestConversationVersion}`,
+    );
+    if (task.conversationVersion !== latestConversationVersion) {
       this.logInfo(
         `discarded id=${task.id} reason=stale conversationVersion=${task.conversationVersion}`,
       );
       return;
     }
+    this.logQueueDebug(
+      `send_start taskId=${task.id} channelId=${envelope.channelId}`,
+    );
     await this.transport.sendMessage(envelope.channelId, content);
+    this.logQueueDebug(
+      `send_complete taskId=${task.id} channelId=${envelope.channelId}`,
+    );
     await this.recordTurn(envelope, content);
     this.logInfo(`replied id=${task.id} action=${task.action}`);
   }
@@ -204,19 +221,16 @@ export class DiscordBotApp {
     });
   }
 
-  private async isCurrentConversationVersion(task: QueueTask): Promise<boolean> {
-    const latest = await this.queueApi.getLatestConversationVersion(
-      task.targetThreadId,
-    );
-    return task.conversationVersion === latest;
-  }
-
   private logInfo(message: string): void {
     process.stdout.write(`[discord-bot] ${message}\n`);
   }
 
   private logError(message: string): void {
     process.stdout.write(`[discord-bot-error] ${message}\n`);
+  }
+
+  private logQueueDebug(message: string): void {
+    process.stdout.write(`[DEBUG-pomdp-queue] ${message}\n`);
   }
 
   private async recordTurn(

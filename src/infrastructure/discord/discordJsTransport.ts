@@ -64,9 +64,15 @@ export class DiscordJsTransport implements DiscordTransport {
   async sendMessage(channelId: string, content: string): Promise<void> {
     const channel = await this.resolveChannel(channelId);
     const parts = splitDiscordMessage(content);
+    process.stdout.write(
+      `[DEBUG-pomdp-queue] transport_send_start channelId=${channelId} parts=${parts.length} chars=${content.length}\n`,
+    );
     for (const part of parts) {
       await channel.send(part);
     }
+    process.stdout.write(
+      `[DEBUG-pomdp-queue] transport_send_complete channelId=${channelId} parts=${parts.length} chars=${content.length}\n`,
+    );
   }
 
   async sendTyping(channelId: string): Promise<void> {
@@ -77,8 +83,14 @@ export class DiscordJsTransport implements DiscordTransport {
   private async resolveChannel(channelId: string): Promise<DiscordTextChannel> {
     const cached = this.channelMap.get(channelId);
     if (cached) {
+      process.stdout.write(
+        `[DEBUG-pomdp-queue] resolve_channel channelId=${channelId} source=cache\n`,
+      );
       return cached;
     }
+    process.stdout.write(
+      `[DEBUG-pomdp-queue] resolve_channel channelId=${channelId} source=fetch\n`,
+    );
     const fetched = await this.client.channels?.fetch(channelId);
     if (!isDiscordTextChannel(fetched)) {
       throw new Error(`Unknown channel id: ${channelId}`);

@@ -24,7 +24,7 @@ import { createCheckpointSummarizationMiddleware } from "./infrastructure/agent/
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   createMemorySystemClient,
   formatPolicyCardsForPrompt,
@@ -134,9 +134,10 @@ const main = async (): Promise<void> => {
     webClient,
     analysisModel,
   });
-  const queueStore = new FileQueueStore(
+  const queueFilePath = resolve(
     join(env.queueDir, `${identity.botId}.json`),
   );
+  const queueStore = new FileQueueStore(queueFilePath);
   const queueApi = createQueueApi(queueStore);
   const runtimeContext = new AgentRuntimeContext();
   const tools = createCustomTools({
@@ -280,6 +281,9 @@ const main = async (): Promise<void> => {
       }),
     (input) => conversationPlanner.assessConversationOpportunity(input),
     (input) => pendingInteractionResolver.resolve(input),
+  );
+  process.stdout.write(
+    `[DEBUG-pomdp-queue] consumer_initialized botId=${identity.botId} queuePath=${queueFilePath} pid=${process.pid}\n`,
   );
   app.start();
 

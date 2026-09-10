@@ -50,6 +50,9 @@ export class QueueWorker {
         if (!task) {
           return;
         }
+        process.stdout.write(
+          `[DEBUG-pomdp-queue] dequeued taskId=${task.id} action=${task.action} source=${task.source} interactionId=${task.sourceInteractionId ?? "none"} threadId=${task.targetThreadId} dueAt=${task.dueAt} conversationVersion=${task.conversationVersion}\n`,
+        );
         try {
           await this.handler(task);
         } catch (error: unknown) {
@@ -59,12 +62,18 @@ export class QueueWorker {
             `[queue-handler-error] taskId=${task.id} action=${task.action} ${message}\n`,
           );
           await this.queue.release(task.id, undefined, "handler failed");
+          process.stdout.write(
+            `[DEBUG-pomdp-queue] released taskId=${task.id} reason=handler_failed\n`,
+          );
           currentNow = new Date();
           continue;
         }
 
         try {
           await this.queue.ack(task.id);
+          process.stdout.write(
+            `[DEBUG-pomdp-queue] acked taskId=${task.id}\n`,
+          );
         } catch (error: unknown) {
           const message =
             error instanceof Error ? (error.stack ?? error.message) : String(error);
