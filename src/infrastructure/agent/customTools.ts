@@ -10,18 +10,15 @@ interface TrustedContextReader {
 
 export interface CustomToolDeps {
   knowledgeAccessService: KnowledgeAccessService;
-  userMemoryClient: Pick<
+  memoryClient: Pick<
     MemorySystemClient,
     | "rememberUserNote"
-    | "searchUserNotes"
+    | "findUserNotesForManagement"
     | "replaceUserNote"
     | "deleteUserNote"
+    | "rememberDailyEvent"
     | "inspectCatalog"
     | "searchMemory"
-  >;
-  dailyEventClient?: Pick<
-    MemorySystemClient,
-    "rememberDailyEvent" | "searchDailyEvents" | "getDailyEventsByDate"
   >;
   botId: string;
   runtimeContext: TrustedContextReader;
@@ -30,20 +27,17 @@ export interface CustomToolDeps {
     delayMinutes?: number;
     everyMinutes?: number;
     atIso?: string;
-  }) => Promise<{ id: string; dueAt: string; type: "scheduled_once" | "scheduled_recurring" }>;
+  }) => Promise<{
+    id: string;
+    dueAt: string;
+    type: "scheduled_once" | "scheduled_recurring";
+  }>;
   getQueueStatus?: (input?: { limit?: number }) => Promise<unknown>;
 }
 
 const schemaCompat = <T>(schema: T): T => schema;
 
 export const createCustomTools = (deps: CustomToolDeps) => {
-  const requireDailyEventClient = () => {
-    if (!deps.dailyEventClient) {
-      throw new Error("daily event backend is not configured");
-    }
-    return deps.dailyEventClient;
-  };
-
   const trustedScope = () => {
     const context = deps.runtimeContext.current();
     return {
@@ -55,16 +49,22 @@ export const createCustomTools = (deps: CustomToolDeps) => {
 
   const searchMemory = async (
     input: Parameters<MemorySystemClient["searchMemory"]>[0],
-    resultKey: "conversationHistory" | "userMemory" | "policyCards",
+    resultKey:
+      | "conversationHistory"
+      | "userMemory"
+      | "dailyEvents"
+      | "policyCards",
   ) => {
     try {
       const result = await retryTransient(() =>
-        deps.userMemoryClient.searchMemory(input),
+        deps.memoryClient.searchMemory(input),
       );
-      return result[resultKey] ?? {
-        status: "unavailable",
-        reason: `${resultKey} result was omitted`,
-      };
+      return (
+        result[resultKey] ?? {
+          status: "unavailable",
+          reason: `${resultKey} result was omitted`,
+        }
+      );
     } catch {
       return {
         status: "unavailable",
@@ -79,7 +79,7 @@ export const createCustomTools = (deps: CustomToolDeps) => {
       const [memory, knowledge] = await Promise.all([
         loadCatalog(
           () =>
-            deps.userMemoryClient.inspectCatalog({
+            deps.memoryClient.inspectCatalog({
               ...scope,
               ...(query?.trim() ? { query: query.trim() } : {}),
             }),
@@ -90,9 +90,19 @@ export const createCustomTools = (deps: CustomToolDeps) => {
           "knowledge catalog",
         ),
       ]);
+      const memoryReasons = sanitizeCatalogReasons(memory, "memory catalog");
+      const knowledgeReasons = sanitizeCatalogReasons(
+        knowledge,
+        "knowledge catalog",
+      );
+      console.log("call inspectContextCatalogTool: memory", memoryReasons);
+      console.log(
+        "call inspectContextCatalogTool: knowledge",
+        knowledgeReasons,
+      );
       return JSON.stringify({
-        memory: sanitizeCatalogReasons(memory, "memory catalog"),
-        knowledge: sanitizeCatalogReasons(knowledge, "knowledge catalog"),
+        memory: memoryReasons,
+        knowledge: knowledgeReasons,
       });
     },
     {
@@ -194,10 +204,12 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     {
       name: "web_list",
       description: "Searches web and returns list results by query.",
-      schema: schemaCompat(z.object({
-        query: z.string(),
-        k: z.number().int().min(1).max(20).default(5),
-      })) as never,
+      schema: schemaCompat(
+        z.object({
+          query: z.string(),
+          k: z.number().int().min(1).max(20).default(5),
+        }),
+      ) as never,
     },
   );
 
@@ -209,19 +221,31 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     {
       name: "web_page",
       description: "Fetches a web page and returns url/title/markdown.",
-      schema: schemaCompat(z.object({
-        url: z.string().url(),
-      })) as never,
+      schema: schemaCompat(
+        z.object({
+          url: z.string().url(),
+        }),
+      ) as never,
     },
   );
 
   const searchSavedKnowledgeTool = tool(
-    async ({ query, limit, minScore }: { query: string; limit?: number; minScore?: number }) => {
-      const results = await retryTransient(() => deps.knowledgeAccessService.searchSavedKnowledge({
-        query,
-        ...(limit ? { limit } : {}),
-        ...(minScore !== undefined ? { minScore } : {}),
-      }));
+    async ({
+      query,
+      limit,
+      minScore,
+    }: {
+      query: string;
+      limit?: number;
+      minScore?: number;
+    }) => {
+      const results = await retryTransient(() =>
+        deps.knowledgeAccessService.searchSavedKnowledge({
+          query,
+          ...(limit ? { limit } : {}),
+          ...(minScore !== undefined ? { minScore } : {}),
+        }),
+      );
       return JSON.stringify(
         results.map(({ score, ...item }) => {
           void score;
@@ -232,23 +256,35 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     {
       name: "search_saved_knowledge",
       description: "Searches saved shared knowledge from Postgres/pgvector.",
-      schema: schemaCompat(z.object({
-        query: z.string(),
-        limit: z.number().int().min(1).max(20).optional(),
-        minScore: z.number().min(0).max(1).optional(),
-      })) as never,
+      schema: schemaCompat(
+        z.object({
+          query: z.string(),
+          limit: z.number().int().min(1).max(20).optional(),
+          minScore: z.number().min(0).max(1).optional(),
+        }),
+      ) as never,
     },
   );
 
   const getSavedArticleTool = tool(
-    async ({ articleId, url, detail }: { articleId?: string; url?: string; detail?: "summary" | "content" }) => {
+    async ({
+      articleId,
+      url,
+      detail,
+    }: {
+      articleId?: string;
+      url?: string;
+      detail?: "summary" | "content";
+    }) => {
       if (!articleId && !url) {
         return JSON.stringify({ error: "articleId or url is required" });
       }
-      const article = await retryTransient(() => deps.knowledgeAccessService.getSavedArticle({
-        ...(articleId ? { articleId } : {}),
-        ...(url ? { url } : {}),
-      }));
+      const article = await retryTransient(() =>
+        deps.knowledgeAccessService.getSavedArticle({
+          ...(articleId ? { articleId } : {}),
+          ...(url ? { url } : {}),
+        }),
+      );
       if (!article) {
         return JSON.stringify(null);
       }
@@ -266,12 +302,15 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "get_saved_article",
-      description: "Gets a shared saved article. Defaults to summary metadata; request content or raw detail only when necessary.",
-      schema: schemaCompat(z.object({
-        articleId: z.string().optional(),
-        url: z.string().url().optional(),
-        detail: z.enum(["summary", "content"]).default("summary"),
-      })) as never,
+      description:
+        "Gets a shared saved article. Defaults to summary metadata; request content or raw detail only when necessary.",
+      schema: schemaCompat(
+        z.object({
+          articleId: z.string().optional(),
+          url: z.string().url().optional(),
+          detail: z.enum(["summary", "content"]).default("summary"),
+        }),
+      ) as never,
     },
   );
 
@@ -290,17 +329,20 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "save_web_knowledge",
-      description: "Fetches and saves a page as shared knowledge. Use only when the user explicitly asks to save or remember that URL.",
-      schema: schemaCompat(z.object({
-        url: z.string().url(),
-      })) as never,
+      description:
+        "Fetches and saves a page as shared knowledge. Use only when the user explicitly asks to save or remember that URL.",
+      schema: schemaCompat(
+        z.object({
+          url: z.string().url(),
+        }),
+      ) as never,
     },
   );
 
   const rememberUserNoteTool = tool(
     async ({ note }: { note: string }) => {
       return JSON.stringify(
-        await deps.userMemoryClient.rememberUserNote(
+        await deps.memoryClient.rememberUserNote(
           deps.runtimeContext.current().userId,
           note,
         ),
@@ -308,16 +350,19 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "remember_user_note",
-      description: "Saves stable user context. Deduplicates equivalent notes; do not use for dated events or proactive-topic reactions.",
-      schema: schemaCompat(z.object({
-        note: z.string(),
-      })) as never,
+      description:
+        "Saves stable user context. Deduplicates equivalent notes; do not use for dated events or proactive-topic reactions.",
+      schema: schemaCompat(
+        z.object({
+          note: z.string(),
+        }),
+      ) as never,
     },
   );
 
   const searchUserNotesTool = tool(
     async ({ query, limit }: { query: string; limit?: number }) => {
-      const results = await deps.userMemoryClient.searchUserNotes(
+      const results = await deps.memoryClient.findUserNotesForManagement(
         deps.runtimeContext.current().userId,
         query,
         limit ?? 5,
@@ -326,18 +371,21 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "search_user_notes",
-      description: "Searches shared UserMemory notes and returns their IDs for explicit replacement or deletion.",
-      schema: schemaCompat(z.object({
-        query: z.string().default(""),
-        limit: z.number().int().min(1).max(20).default(5),
-      })) as never,
+      description:
+        "Searches shared UserMemory notes and returns their IDs for explicit replacement or deletion.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string().default(""),
+          limit: z.number().int().min(1).max(20).default(5),
+        }),
+      ) as never,
     },
   );
 
   const replaceUserNoteTool = tool(
     async ({ noteId, note }: { noteId: number; note: string }) => {
       return JSON.stringify(
-        await deps.userMemoryClient.replaceUserNote(
+        await deps.memoryClient.replaceUserNote(
           deps.runtimeContext.current().userId,
           noteId,
           note,
@@ -346,17 +394,20 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "replace_user_note",
-      description: "Replaces one searched UserMemory note by its ID for an explicit user correction.",
-      schema: schemaCompat(z.object({
-        noteId: z.number().int().positive(),
-        note: z.string(),
-      })) as never,
+      description:
+        "Replaces one searched UserMemory note by its ID for an explicit user correction.",
+      schema: schemaCompat(
+        z.object({
+          noteId: z.number().int().positive(),
+          note: z.string(),
+        }),
+      ) as never,
     },
   );
 
   const deleteUserNoteTool = tool(
     async ({ noteId }: { noteId: number }) => {
-      const deleted = await deps.userMemoryClient.deleteUserNote(
+      const deleted = await deps.memoryClient.deleteUserNote(
         deps.runtimeContext.current().userId,
         noteId,
       );
@@ -364,22 +415,29 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "delete_user_note",
-      description: "Deletes one searched UserMemory note by its ID after an explicit user request.",
-      schema: schemaCompat(z.object({
-        noteId: z.number().int().positive(),
-      })) as never,
+      description:
+        "Deletes one searched UserMemory note by its ID after an explicit user request.",
+      schema: schemaCompat(
+        z.object({
+          noteId: z.number().int().positive(),
+        }),
+      ) as never,
     },
   );
 
   const rememberDailyEventTool = tool(
-    async ({ eventDate, summary, tags, sourceMessage }: {
+    async ({
+      eventDate,
+      summary,
+      tags,
+      sourceMessage,
+    }: {
       eventDate: string;
       summary: string;
       tags?: string[];
       sourceMessage?: string;
     }) => {
-      const dailyEventClient = requireDailyEventClient();
-      const saved = await dailyEventClient.rememberDailyEvent({
+      const saved = await deps.memoryClient.rememberDailyEvent({
         userId: deps.runtimeContext.current().userId,
         eventDate,
         summary,
@@ -390,93 +448,115 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     },
     {
       name: "remember_daily_event",
-      description: "Stores a short daily record of what the user did on a specific date.",
-      schema: schemaCompat(z.object({
-        eventDate: z.string(),
-        summary: z.string(),
-        tags: z.array(z.string()).optional(),
-        sourceMessage: z.string().optional(),
-      })) as never,
+      description:
+        "Stores a short daily record of what the user did on a specific date.",
+      schema: schemaCompat(
+        z.object({
+          eventDate: z.string(),
+          summary: z.string(),
+          tags: z.array(z.string()).optional(),
+          sourceMessage: z.string().optional(),
+        }),
+      ) as never,
     },
   );
 
   const searchDailyEventsTool = tool(
-    async ({ query, limit, fromDate, toDate }: {
+    async ({
+      query,
+      limit,
+      fromDate,
+      toDate,
+    }: {
       query: string;
       limit?: number;
       fromDate?: string;
       toDate?: string;
     }) => {
-      const dailyEventClient = requireDailyEventClient();
-      try {
-        const results = await retryTransient(() =>
-          dailyEventClient.searchDailyEvents({
-            userId: deps.runtimeContext.current().userId,
-            query,
-            limit: Math.min(limit ?? 5, 10),
-            ...(fromDate ? { from: fromDate } : {}),
-            ...(toDate ? { to: toDate } : {}),
-          }),
-        );
-        return JSON.stringify(
-          results.length > 0
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query,
+          scopes: ["daily_events"],
+          limits: { daily_events: Math.min(limit ?? 5, 10) },
+          ...(fromDate || toDate
             ? {
-                status: "found",
-                data: results.slice(0, 10).map((event) => ({
-                  eventId: event.id,
-                  eventDate: event.eventDate,
-                  summary: event.summary,
-                })),
+                filters: {
+                  dailyEvents: {
+                    ...(fromDate ? { from: fromDate } : {}),
+                    ...(toDate ? { to: toDate } : {}),
+                  },
+                },
               }
-            : { status: "not_found" },
-        );
-      } catch {
-        return JSON.stringify({
-          status: "unavailable",
-          reason: "DailyEvent search failed",
-        });
-      }
+            : {}),
+        },
+        "dailyEvents",
+      );
+      return JSON.stringify(result);
     },
     {
       name: "search_daily_events",
-      description: "Searches short daily user activity records by text and optional date range.",
-      schema: schemaCompat(z.object({
-        query: z.string(),
-        limit: z.number().int().min(1).max(20).optional(),
-        fromDate: z.string().optional(),
-        toDate: z.string().optional(),
-      })) as never,
+      description:
+        "Searches short daily user activity records by text and optional date range.",
+      schema: schemaCompat(
+        z.object({
+          query: z.string(),
+          limit: z.number().int().min(1).max(20).optional(),
+          fromDate: z.string().optional(),
+          toDate: z.string().optional(),
+        }),
+      ) as never,
     },
   );
 
   const getDailyEventsByDateTool = tool(
-    async ({ date, windowDays, limit }: {
+    async ({
+      date,
+      windowDays,
+      limit,
+    }: {
       date: string;
       windowDays?: number;
       limit?: number;
     }) => {
-      const dailyEventClient = requireDailyEventClient();
-      const results = await dailyEventClient.getDailyEventsByDate({
-        userId: deps.runtimeContext.current().userId,
-        date,
-        ...(windowDays !== undefined ? { windowDays } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-      });
-      return JSON.stringify(results);
+      const range = dailyEventDateRange(date, windowDays ?? 3);
+      const result = await searchMemory(
+        {
+          ...trustedScope(),
+          query: "",
+          scopes: ["daily_events"],
+          limits: { daily_events: Math.min(limit ?? 20, 50) },
+          filters: { dailyEvents: range },
+        },
+        "dailyEvents",
+      );
+      return JSON.stringify(result);
     },
     {
       name: "get_daily_events_by_date",
       description: "Gets daily user activity records around a specific date.",
-      schema: schemaCompat(z.object({
-        date: z.string(),
-        windowDays: z.number().int().min(0).max(30).optional(),
-        limit: z.number().int().min(1).max(50).optional(),
-      })) as never,
+      schema: schemaCompat(
+        z.object({
+          date: z.string(),
+          windowDays: z.number().int().min(0).max(30).optional(),
+          limit: z.number().int().min(1).max(50).optional(),
+        }),
+      ) as never,
     },
   );
 
   const enqueueTaskTool = tool(
-    async ({ text, delayMinutes, everyMinutes, atIso }: { text: string; delayMinutes?: number; everyMinutes?: number; atIso?: string }) => {
+    async ({
+      text,
+      delayMinutes,
+      everyMinutes,
+      atIso,
+    }: {
+      text: string;
+      delayMinutes?: number;
+      everyMinutes?: number;
+      atIso?: string;
+    }) => {
       if (!deps.enqueueTask) {
         return JSON.stringify({ error: "queue backend is not configured" });
       }
@@ -494,12 +574,14 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     {
       name: "enqueue_task",
       description: "Schedules a future task for the agent queue.",
-      schema: schemaCompat(z.object({
-        text: z.string(),
-        delayMinutes: z.number().int().min(1).optional(),
-        everyMinutes: z.number().int().min(1).optional(),
-        atIso: z.string().optional(),
-      })) as never,
+      schema: schemaCompat(
+        z.object({
+          text: z.string(),
+          delayMinutes: z.number().int().min(1).optional(),
+          everyMinutes: z.number().int().min(1).optional(),
+          atIso: z.string().optional(),
+        }),
+      ) as never,
     },
   );
 
@@ -516,9 +598,11 @@ export const createCustomTools = (deps: CustomToolDeps) => {
     {
       name: "get_queue_status",
       description: "Returns current queue status (counts and upcoming tasks).",
-      schema: schemaCompat(z.object({
-        limit: z.number().int().min(0).max(20).default(5).optional(),
-      })) as never,
+      schema: schemaCompat(
+        z.object({
+          limit: z.number().int().min(0).max(20).default(5).optional(),
+        }),
+      ) as never,
     },
   );
 
@@ -584,6 +668,31 @@ const isTransientError = (error: unknown): boolean => {
   return /(timeout|timed out|ECONNRESET|ECONNREFUSED|EAI_AGAIN|502|503|504)/i.test(
     message,
   );
+};
+
+const dailyEventDateRange = (
+  date: string,
+  windowDays: number,
+): { from: string; to: string } => {
+  const normalized = /^\d{8}$/.test(date)
+    ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
+    : date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new TypeError("date must use YYYY-MM-DD or YYYYMMDD format");
+  }
+  const center = new Date(`${normalized}T00:00:00.000Z`);
+  if (
+    Number.isNaN(center.getTime()) ||
+    center.toISOString().slice(0, 10) !== normalized
+  ) {
+    throw new TypeError("date must be a valid calendar date");
+  }
+  const format = (delta: number): string => {
+    const value = new Date(center);
+    value.setUTCDate(value.getUTCDate() + delta);
+    return value.toISOString().slice(0, 10);
+  };
+  return { from: format(-windowDays), to: format(windowDays) };
 };
 
 const sanitizeCatalogReasons = <T>(value: T, label: string): T =>

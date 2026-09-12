@@ -1,5 +1,3 @@
-import { MemorySystemClient } from "../memory/memorySystemClient";
-
 export type RequestKind =
   | "human"
   | "conversation"
@@ -15,37 +13,8 @@ export interface RequestContextInput {
   proactiveEvidence?: string;
 }
 
-export interface PolicyContextReader {
-  load(input: {
-    botId: string;
-    threadId: string;
-    userId: string;
-    currentContext: string;
-  }): Promise<string | undefined>;
-}
-
-export interface KnowledgeContextItem {
-  articleId: string;
-  title: string;
-  summary: string;
-  tags: string[];
-  url: string;
-}
-
-export interface KnowledgeContextReader {
-  searchRelevant(input: {
-    query: string;
-    limit: number;
-  }): Promise<KnowledgeContextItem[]>;
-}
-
 export class RequestContextBuilder {
-  constructor(
-    private readonly userMemoryClient: Pick<MemorySystemClient, "searchUserNotes">,
-    private readonly dailyEventClient: Pick<MemorySystemClient, "searchDailyEvents">,
-    private readonly policyContextReader: PolicyContextReader,
-    private readonly now: () => Date = () => new Date(),
-  ) {}
+  constructor(private readonly now: () => Date = () => new Date()) {}
 
   async build(input: RequestContextInput): Promise<string> {
     const sections = [
@@ -61,7 +30,6 @@ export class RequestContextBuilder {
     }
     return fitWholeSections(sections, 8_000);
   }
-
 }
 const fitWholeSections = (sections: string[], maxLength: number): string => {
   const priority = (section: string): number => {

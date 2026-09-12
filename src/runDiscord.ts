@@ -27,7 +27,6 @@ import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { join, resolve } from "node:path";
 import {
   createMemorySystemClient,
-  formatPolicyCardsForPrompt,
 } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
 import { createPostgresTurnRecordReader } from "@chat-agent/memory-system";
@@ -103,6 +102,9 @@ const main = async (): Promise<void> => {
     postgresUrl: env.postgresUrl,
     ollamaBaseUrl: env.ollamaBaseUrl,
     ollamaModel: env.ollamaChatModel,
+    ollamaEmbeddingBaseUrl: env.ollamaEmbeddingBaseUrl,
+    ollamaEmbeddingModel: env.ollamaEmbeddingModel,
+    ollamaEmbeddingDimension: env.ollamaEmbeddingDimension,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
 
@@ -134,16 +136,13 @@ const main = async (): Promise<void> => {
     webClient,
     analysisModel,
   });
-  const queueFilePath = resolve(
-    join(env.queueDir, `${identity.botId}.json`),
-  );
+  const queueFilePath = resolve(join(env.queueDir, `${identity.botId}.json`));
   const queueStore = new FileQueueStore(queueFilePath);
   const queueApi = createQueueApi(queueStore);
   const runtimeContext = new AgentRuntimeContext();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryClient: memoryClient,
-    dailyEventClient: memoryClient,
+    memoryClient,
     botId: identity.botId,
     runtimeContext,
     enqueueTask: async ({ text, delayMinutes, everyMinutes, atIso }) => {
@@ -244,25 +243,7 @@ const main = async (): Promise<void> => {
     turnRecordReader,
     interactionLogStore,
   });
-  const requestContextBuilder = new RequestContextBuilder(
-    memoryClient,
-    memoryClient,
-    {
-      load: async ({ botId, threadId, userId, currentContext }) => {
-        const cards = await memoryClient.searchPolicyCards({
-          botId,
-          threadId,
-          userId,
-          query: currentContext,
-          limit: 3,
-        });
-        return cards.length > 0
-          ? formatPolicyCardsForPrompt(cards)
-          : undefined;
-      },
-    },
-    undefined,
-  );
+  const requestContextBuilder = new RequestContextBuilder();
   const app = new DiscordBotApp(
     identity,
     runtime,

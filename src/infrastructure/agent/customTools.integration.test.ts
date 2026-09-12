@@ -66,7 +66,7 @@ class InMemoryUserMemoryStore {
     };
   }
 
-  async searchUserNotes() {
+  async findUserNotesForManagement() {
     return [];
   }
 
@@ -76,6 +76,10 @@ class InMemoryUserMemoryStore {
 
   async deleteUserNote() {
     return false;
+  }
+
+  async rememberDailyEvent() {
+    throw new Error("not used by this fixture");
   }
 
 }
@@ -110,7 +114,7 @@ integrationTest(
     });
     const tools = createCustomTools({
       knowledgeAccessService,
-      userMemoryClient: new InMemoryUserMemoryStore(),
+      memoryClient: new InMemoryUserMemoryStore(),
       botId: "b1",
       runtimeContext: {
         current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),

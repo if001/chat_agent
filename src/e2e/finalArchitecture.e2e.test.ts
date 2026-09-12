@@ -1,7 +1,6 @@
 import { KnowledgeAccessService } from "@chat-agent/knowledge-access";
 import {
   DailyEvent,
-  MemorySystemClient,
   MemoryUserNote,
 } from "../infrastructure/memory/memorySystemClient";
 import { createCustomTools } from "../infrastructure/agent/customTools";
@@ -39,7 +38,7 @@ class FixtureUserMemoryStore {
     return { ok: true, action: "create" as const, note: saved };
   }
 
-  async searchUserNotes(
+  async findUserNotesForManagement(
     _userId: string,
     query: string,
     limit: number,
@@ -67,6 +66,10 @@ class FixtureUserMemoryStore {
     const previousLength = this.notes.length;
     this.notes = this.notes.filter((item) => item.id !== noteId);
     return this.notes.length < previousLength;
+  }
+
+  async rememberDailyEvent(): Promise<DailyEvent> {
+    throw new Error("not used by this fixture");
   }
 
   async inspectCatalog() {
@@ -133,48 +136,21 @@ class FixtureUserMemoryStore {
             },
           }
         : {}),
+      ...(input.scopes.includes("daily_events")
+        ? {
+            dailyEvents: {
+              status: "found" as const,
+              data: [
+                {
+                  eventId: 1,
+                  eventDate: "2026-08-30",
+                  summary: "release 1.0を公開した",
+                },
+              ],
+            },
+          }
+        : {}),
     };
-  }
-}
-
-class FixtureDailyEvents
-  implements
-    Pick<
-      MemorySystemClient,
-      "rememberDailyEvent" | "searchDailyEvents" | "getDailyEventsByDate"
-    >
-{
-  private readonly events: DailyEvent[] = [
-    {
-      id: 1,
-      userId: "user-1",
-      eventDate: "2026-08-30",
-      summary: "release 1.0を公開した",
-      tags: ["release"],
-      createdAt: new Date("2026-08-30T12:00:00.000Z"),
-    },
-    {
-      id: 2,
-      userId: "user-1",
-      eventDate: "2026-09-01",
-      summary: "CIの原因調査を再開した",
-      tags: ["ci"],
-      createdAt: new Date("2026-09-01T08:00:00.000Z"),
-    },
-  ];
-
-  async rememberDailyEvent(): Promise<DailyEvent> {
-    throw new Error("not used by this read fixture");
-  }
-
-  async searchDailyEvents(): Promise<DailyEvent[]> {
-    return [...this.events].sort((left, right) =>
-      right.eventDate.localeCompare(left.eventDate),
-    );
-  }
-
-  async getDailyEventsByDate(): Promise<DailyEvent[]> {
-    return this.events;
   }
 }
 
@@ -291,11 +267,9 @@ class CatalogDrivenRuntime implements AgentRuntime {
 
 test("fixed long conversation uses checkpoint context without eager memory injection", async () => {
   const userMemoryStore = new FixtureUserMemoryStore();
-  const dailyEventRepository = new FixtureDailyEvents();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryClient: userMemoryStore,
-    dailyEventClient: dailyEventRepository,
+    memoryClient: userMemoryStore,
     botId: "ao",
     runtimeContext: {
       current: () => ({
@@ -343,8 +317,10 @@ test("fixed long conversation uses checkpoint context without eager memory injec
       date: "2026-08-30",
       windowDays: 0,
     })) as string,
-  ) as DailyEvent[];
-  expect(datedEvents.some((event) => event.summary.includes("release 1.0"))).toBe(true);
+  ) as { status: string; data: Array<{ summary: string }> };
+  expect(
+    datedEvents.data.some((event) => event.summary.includes("release 1.0")),
+  ).toBe(true);
 
   const articles = JSON.parse(
     (await findTool(tools, "search_saved_knowledge").invoke({ query: "ジャズ" })) as string,
@@ -365,8 +341,7 @@ test("fixed long conversation uses checkpoint context without eager memory injec
 
   const akaTools = createCustomTools({
     knowledgeAccessService,
-    userMemoryClient: userMemoryStore,
-    dailyEventClient: dailyEventRepository,
+    memoryClient: userMemoryStore,
     botId: "aka",
     runtimeContext: {
       current: () => ({
@@ -399,14 +374,6 @@ test("fixed long conversation uses checkpoint context without eager memory injec
 
   const policyInputs: string[] = [];
   const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    {
-      load: async ({ botId }) => {
-        policyInputs.push(botId);
-        return `${botId}-only policy`;
-      },
-    },
     () => new Date("2026-09-01T09:00:00.000Z"),
   );
   const build = (botId: string) =>
@@ -506,8 +473,7 @@ test("Discord response discovers the catalog before retrieving old conversation 
   const memory = new FixtureUserMemoryStore();
   const tools = createCustomTools({
     knowledgeAccessService,
-    userMemoryClient: memory,
-    dailyEventClient: new FixtureDailyEvents(),
+    memoryClient: memory,
     botId: "ao",
     runtimeContext: {
       current: () => ({

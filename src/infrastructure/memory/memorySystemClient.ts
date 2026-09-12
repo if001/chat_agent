@@ -1,9 +1,7 @@
 import type {
   MemorySystemService as PackageMemorySystemService,
   DailyEvent as PackageDailyEvent,
-  GetDailyEventsByDateInput as PackageGetDailyEventsByDateInput,
   RememberDailyEventInput as PackageRememberDailyEventInput,
-  SearchDailyEventsInput as PackageSearchDailyEventsInput,
   UserMemoryWriteResult as PackageUserMemoryWriteResult,
   UserNote as PackageUserNote,
   MemoryCatalog as PackageMemoryCatalog,
@@ -18,8 +16,6 @@ export type MemoryUserNote = PackageUserNote;
 export type UserMemoryWriteResult = PackageUserMemoryWriteResult;
 export type DailyEvent = PackageDailyEvent;
 export type RememberDailyEventInput = PackageRememberDailyEventInput;
-export type SearchDailyEventsInput = PackageSearchDailyEventsInput;
-export type GetDailyEventsByDateInput = PackageGetDailyEventsByDateInput;
 export type MemoryCatalog = PackageMemoryCatalog;
 export type MemoryCatalogRequest = PackageMemoryCatalogRequest;
 export type MemorySearchRequest = PackageMemorySearchRequest;
@@ -29,12 +25,10 @@ type MemorySystemService = Pick<
   | "ingestTurnRecord"
   | "search"
   | "rememberUserNote"
-  | "searchUserNotes"
+  | "findUserNotesForManagement"
   | "replaceUserNote"
   | "deleteUserNote"
   | "rememberDailyEvent"
-  | "searchDailyEvents"
-  | "getDailyEventsByDate"
   | "inspectCatalog"
 >;
 
@@ -62,15 +56,8 @@ export interface MemoryPolicyCard {
 
 export interface MemorySystemClient {
   ingestTurnRecord(input: TurnRecordInput): Promise<void>;
-  searchPolicyCards(input: {
-    botId: string;
-    threadId: string;
-    userId: string;
-    query: string;
-    limit?: number;
-  }): Promise<MemoryPolicyCard[]>;
   rememberUserNote(userId: string, note: string): Promise<UserMemoryWriteResult>;
-  searchUserNotes(
+  findUserNotesForManagement(
     userId: string,
     query: string,
     limit: number,
@@ -82,8 +69,6 @@ export interface MemorySystemClient {
   ): Promise<UserMemoryWriteResult>;
   deleteUserNote(userId: string, noteId: number): Promise<boolean>;
   rememberDailyEvent(input: RememberDailyEventInput): Promise<DailyEvent>;
-  searchDailyEvents(input: SearchDailyEventsInput): Promise<DailyEvent[]>;
-  getDailyEventsByDate(input: GetDailyEventsByDateInput): Promise<DailyEvent[]>;
   inspectCatalog(input: MemoryCatalogRequest): Promise<MemoryCatalog>;
   searchMemory(input: MemorySearchRequest): Promise<MemorySearchResult>;
 }
@@ -93,6 +78,9 @@ export interface MemorySystemClientOptions {
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaApiKey?: string;
+  ollamaEmbeddingBaseUrl?: string;
+  ollamaEmbeddingModel?: string;
+  ollamaEmbeddingDimension?: number;
 }
 
 export const formatPolicyCardsForPrompt = (
@@ -141,29 +129,13 @@ export const createMemorySystemClient = (
         );
       }
     },
-    searchPolicyCards: async (input) => {
-      if (!service) {
-        return [];
-      }
-      const result = await service.search({
-        botId: input.botId,
-        threadId: input.threadId,
-        userId: input.userId,
-        query: input.query,
-        scopes: ["policy_cards"],
-        limits: { policy_cards: input.limit ?? 3 },
-      });
-      return result.policyCards?.status === "found"
-        ? result.policyCards.data
-        : [];
-    },
     rememberUserNote: async (userId, note) => {
       if (!service) return { ok: false, error: "memory-system is unavailable" };
       return service.rememberUserNote({ userId, note });
     },
-    searchUserNotes: async (userId, query, limit) => {
+    findUserNotesForManagement: async (userId, query, limit) => {
       if (!service) return [];
-      return service.searchUserNotes({ userId, query, limit });
+      return service.findUserNotesForManagement({ userId, query, limit });
     },
     replaceUserNote: async (userId, noteId, note) => {
       if (!service) return { ok: false, error: "memory-system is unavailable" };
@@ -176,14 +148,6 @@ export const createMemorySystemClient = (
     rememberDailyEvent: async (input) => {
       if (!service) throw new Error("memory-system is unavailable");
       return service.rememberDailyEvent(input);
-    },
-    searchDailyEvents: async (input) => {
-      if (!service) return [];
-      return service.searchDailyEvents(input);
-    },
-    getDailyEventsByDate: async (input) => {
-      if (!service) return [];
-      return service.getDailyEventsByDate(input);
     },
     inspectCatalog: async (input) => {
       if (!service) return unavailableCatalog("memory-system is unavailable");
@@ -246,6 +210,9 @@ const loadMemorySystemService = (
         ollamaBaseUrl: string;
         ollamaModel: string;
         ollamaAPIKey: string;
+        ollamaEmbeddingBaseUrl?: string;
+        ollamaEmbeddingModel?: string;
+        ollamaEmbeddingDimension?: number;
       }) => MemorySystemService;
     };
     if (!mod.createMemorySystemService) {
@@ -259,6 +226,15 @@ const loadMemorySystemService = (
       ollamaBaseUrl: options.ollamaBaseUrl,
       ollamaModel: options.ollamaModel,
       ollamaAPIKey: options.ollamaApiKey ?? "",
+      ...(options.ollamaEmbeddingBaseUrl
+        ? { ollamaEmbeddingBaseUrl: options.ollamaEmbeddingBaseUrl }
+        : {}),
+      ...(options.ollamaEmbeddingModel
+        ? { ollamaEmbeddingModel: options.ollamaEmbeddingModel }
+        : {}),
+      ...(options.ollamaEmbeddingDimension
+        ? { ollamaEmbeddingDimension: options.ollamaEmbeddingDimension }
+        : {}),
     });
   } catch (error: unknown) {
     const message =

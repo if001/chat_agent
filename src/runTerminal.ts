@@ -11,7 +11,6 @@ import { loadSystemPromptByBotId } from "./config/systemPromptLoader";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint";
 import {
   createMemorySystemClient,
-  formatPolicyCardsForPrompt,
 } from "./infrastructure/memory/memorySystemClient";
 import { createTurnRecorder } from "./infrastructure/memory/turnRecorder";
 import { RequestContextBuilder } from "./infrastructure/agent/requestContextBuilder";
@@ -75,25 +74,7 @@ const main = async (): Promise<void> => {
     ollamaModel: env.ollamaChatModel,
     ...(env.ollamaApiKey ? { ollamaApiKey: env.ollamaApiKey } : {}),
   });
-  const requestContextBuilder = new RequestContextBuilder(
-    memoryClient,
-    memoryClient,
-    {
-      load: async ({ botId, threadId, userId, currentContext }) => {
-        const cards = await memoryClient.searchPolicyCards({
-          botId,
-          threadId,
-          userId,
-          query: currentContext,
-          limit: 5,
-        });
-        return cards.length > 0
-          ? formatPolicyCardsForPrompt(cards)
-          : undefined;
-      },
-    },
-    undefined,
-  );
+  const requestContextBuilder = new RequestContextBuilder();
   const app = new TerminalChatApp(
     identity,
     runtime,

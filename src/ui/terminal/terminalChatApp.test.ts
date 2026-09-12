@@ -8,7 +8,6 @@ import {
   AgentRuntime,
   BotIdentity,
 } from "../../core/types";
-import { MemorySystemClient } from "../../infrastructure/memory/memorySystemClient";
 import { RequestContextBuilder } from "../../infrastructure/agent/requestContextBuilder";
 import { DeepAgentRuntime } from "../../infrastructure/agent/deepAgentRuntime";
 
@@ -61,14 +60,6 @@ test("keeps the system prompt static and does not prefetch policy context", asyn
   const runtime = new RuntimeStub();
   const policyInputs: string[] = [];
   const builder = new RequestContextBuilder(
-    emptyUserMemoryStore,
-    emptyDailyEventRepository,
-    {
-      load: async ({ currentContext }) => {
-        policyInputs.push(currentContext);
-        return `policy: ${currentContext}`;
-      },
-    },
     () => new Date("2026-09-02T00:00:00.000Z"),
   );
   const app = new TerminalChatApp(
@@ -110,9 +101,6 @@ test("still returns answer when request context resolver fails", async () => {
 test("builds time and origin context without prefetched memory or focus", async () => {
   const runtime = new RuntimeStub();
   const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    { load: async () => "use explicit constraints" },
     () => new Date("2026-09-02T00:00:00.000Z"),
   );
   const app = new TerminalChatApp(
@@ -234,41 +222,3 @@ test("uses bot-scoped checkpoint threads and caches only static prompts", async 
     "context: third",
   ]);
 });
-
-const userMemoryStore = {
-  rememberUserNote: async () => {
-    throw new Error("not used");
-  },
-  searchUserNotes: async () => [
-    { id: 1, note: "prefers concise answers", createdAt: new Date(0) },
-  ],
-  replaceUserNote: async () => null,
-  deleteUserNote: async () => false,
-};
-
-const emptyUserMemoryStore = {
-  ...userMemoryStore,
-  searchUserNotes: async () => [],
-};
-
-const dailyEventRepository: Pick<MemorySystemClient, "searchDailyEvents"> = {
-  rememberDailyEvent: async () => {
-    throw new Error("not used");
-  },
-  searchDailyEvents: async () => [
-    {
-      id: 1,
-      userId: TERMINAL_USER_ID,
-      eventDate: "2026-09-03",
-      summary: "release day",
-      tags: [],
-      createdAt: new Date(0),
-    },
-  ],
-  getDailyEventsByDate: async () => [],
-};
-
-const emptyDailyEventRepository: Pick<MemorySystemClient, "searchDailyEvents"> = {
-  ...dailyEventRepository,
-  searchDailyEvents: async () => [],
-};

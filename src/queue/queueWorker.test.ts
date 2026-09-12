@@ -98,3 +98,35 @@ test("does not re-run a handled task when ack fails", async () => {
   expect(handled).toEqual(["1"]);
   worker.stop();
 });
+
+test("releases a failed task with only the error name and message", async () => {
+  const task = createTask("1", "first");
+  let dequeued = false;
+  const released: unknown[] = [];
+  const queue: QueueStore = {
+    dequeueReady: async () => {
+      if (dequeued) return null;
+      dequeued = true;
+      return task;
+    },
+    ack: async () => undefined,
+    release: async (_taskId, _nextDueAt, error) => {
+      released.push(error);
+    },
+    getLatestConversationVersion: async () => 0,
+  };
+  const worker = new QueueWorker(queue, async () => {
+    const error = new TypeError("runtime failed");
+    error.stack = "sensitive stack trace";
+    throw error;
+  });
+
+  worker.start();
+  await worker.tick();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect(released).toEqual([
+    { name: "TypeError", message: "runtime failed" },
+  ]);
+  worker.stop();
+});

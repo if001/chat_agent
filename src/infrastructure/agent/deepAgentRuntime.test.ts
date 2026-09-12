@@ -1,4 +1,5 @@
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
+import type { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { DeepAgentRuntime } from "./deepAgentRuntime";
 import { AgentRuntimeContext } from "./runtimeContext";
 
@@ -150,7 +151,71 @@ test("bounds the agent tool loop for each response", async () => {
     messages: [{ role: "user", content: "hello" }],
   });
 
-  expect(limits).toEqual([12]);
+  expect(limits).toEqual([30]);
+});
+
+test("logs tool names, arguments, outputs, and errors", async () => {
+  let callbacks: BaseCallbackHandler[] | undefined;
+  const info = jest.spyOn(console, "info").mockImplementation(() => undefined);
+  const error = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  const runtime = new DeepAgentRuntime(
+    {},
+    [],
+    () => ({
+      invoke: async (_input, config) => {
+        callbacks = config.callbacks;
+        return { messages: [{ role: "assistant", content: "ok" }] };
+      },
+    }),
+    () => undefined,
+    () => undefined,
+  );
+
+  await runtime.respond({
+    botId: "ao",
+    userId: "user-1",
+    systemPrompt: "ao",
+    threadId: "thread-1",
+    messages: [{ role: "user", content: "remember jazz" }],
+  });
+
+  const callback = callbacks?.[0];
+  callback?.handleToolStart?.(
+    { name: "fallback_name" } as never,
+    '{"query":"jazz"}',
+    "run-success",
+    undefined,
+    undefined,
+    undefined,
+    "search_user_memory",
+  );
+  callback?.handleToolEnd?.({ status: "found" }, "run-success");
+  const toolError = new Error("tool failed");
+  callback?.handleToolStart?.(
+    { name: "web_page" } as never,
+    '{"url":"https://example.com"}',
+    "run-error",
+  );
+  callback?.handleToolError?.(toolError, "run-error");
+
+  expect(info).toHaveBeenCalledWith("[agent-tool:start]", {
+    tool: "search_user_memory",
+    arguments: '{"query":"jazz"}',
+    runId: "run-success",
+  });
+  expect(info).toHaveBeenCalledWith("[agent-tool:end]", {
+    tool: "search_user_memory",
+    output: { status: "found" },
+    runId: "run-success",
+  });
+  expect(error).toHaveBeenCalledWith("[agent-tool:error]", {
+    tool: "web_page",
+    error: toolError,
+    runId: "run-error",
+  });
+
+  info.mockRestore();
+  error.mockRestore();
 });
 
 test("agent fixture inspects the catalog before scoped retrieval and skips tools for greetings", async () => {
@@ -335,10 +400,11 @@ test("disables the fixed DeepAgent summarizer for each checkpoint invocation", a
   });
 
   expect(configs).toEqual([
-    {
+    expect.objectContaining({
       configurable: { thread_id: "ao:thread-1" },
       context: { trigger: { tokens: Number.MAX_SAFE_INTEGER } },
-      recursionLimit: 12,
-    },
+      recursionLimit: 30,
+      callbacks: expect.any(Array),
+    }),
   ]);
 });

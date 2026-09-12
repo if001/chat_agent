@@ -1,206 +1,47 @@
-import { MemorySystemClient } from "../memory/memorySystemClient";
 import { RequestContextBuilder } from "./requestContextBuilder";
 
-const userMemoryStore = {
-  searchUserNotes: async (userId: string) => [
-    { id: 1, note: `shared note for ${userId}`, createdAt: new Date(0) },
-  ],
+const request = {
+  botId: "ao",
+  userId: "user-1",
+  threadId: "thread-1",
+  currentContext: "hello",
+  kind: "human" as const,
 };
 
-const dailyEventRepository = {
-  searchDailyEvents: async ({ userId }: { userId: string }) => [
-    {
-      id: 1,
-      userId,
-      eventDate: "2026-09-01",
-      summary: "shared event",
-      tags: [],
-      createdAt: new Date(0),
-    },
-  ],
-} as Pick<MemorySystemClient, "searchDailyEvents">;
-
-test("builds fresh time and origin context without prefetching memory", async () => {
-  const policyInputs: string[] = [];
-  let current = new Date("2026-09-01T00:00:00.000Z");
+test("builds only runtime metadata for a human request", async () => {
   const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    {
-      load: async ({ botId }) => {
-        policyInputs.push(botId);
-        return `policy for ${botId}`;
-      },
-    },
-    () => current,
-  );
-
-  const first = await builder.build({
-    botId: "ao",
-    userId: "discord-1",
-    threadId: "thread-1",
-    currentContext: "hello",
-    kind: "human",
-  });
-  current = new Date("2026-09-01T01:00:00.000Z");
-  const second = await builder.build({
-    botId: "aka",
-    userId: "discord-1",
-    threadId: "thread-1",
-    currentContext: "hello again",
-    kind: "human",
-  });
-
-  expect(first).toContain("2026-09-01T00:00:00.000Z");
-  expect(second).toContain("2026-09-01T01:00:00.000Z");
-  expect(first).toContain("Input origin: human");
-  expect(first).not.toContain("shared note for discord-1");
-  expect(second).not.toContain("shared event");
-  expect(first).not.toContain("policy for ao");
-  expect(second).not.toContain("policy for aka");
-  expect(policyInputs).toEqual([]);
-});
-
-test("loads daily events only for temporal requests", async () => {
-  const queries: string[] = [];
-  const builder = new RequestContextBuilder(
-    userMemoryStore,
-    {
-      searchDailyEvents: async ({ query }) => {
-        queries.push(query);
-        return [{ id: 1, userId: "discord-1", eventDate: "2026-09-01", summary: "shared event", tags: [], createdAt: new Date(0) }];
-      },
-    } as Pick<MemorySystemClient, "searchDailyEvents">,
-    { load: async () => undefined },
-  );
-
-  const ordinary = await builder.build({ botId: "ao", userId: "discord-1", threadId: "t", currentContext: "設計について相談したい", kind: "human" });
-  const temporal = await builder.build({ botId: "ao", userId: "discord-1", threadId: "t", currentContext: "昨日は何をした？", kind: "human" });
-
-  expect(ordinary).not.toContain("shared event");
-  expect(temporal).not.toContain("shared event");
-  expect(queries).toEqual([]);
-});
-
-test("injects only lightweight shared article candidates for knowledge requests", async () => {
-  const queries: string[] = [];
-  const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    { load: async () => undefined },
-    () => new Date("2026-09-01T00:00:00.000Z"),
-    undefined,
-    {
-      searchRelevant: async ({ query }) => {
-        queries.push(query);
-        return [{ articleId: "article-1", title: "共有記事", summary: "要約", tags: ["agent"], url: "https://example.com/article" }];
-      },
-    },
-  );
-
-  const greeting = await builder.build({ botId: "ao", userId: "u", threadId: "t", currentContext: "こんにちは", kind: "human" });
-  const question = await builder.build({ botId: "aka", userId: "u", threadId: "t", currentContext: "以前共有したagentの記事について教えて？", kind: "human" });
-
-  expect(greeting).not.toContain("Relevant Shared Articles");
-  expect(question).not.toContain("articleId=article-1");
-  expect(question).not.toContain("rawMarkdown");
-  expect(queries).toEqual([]);
-});
-
-test("marks relevant shared article retrieval failures without failing the request", async () => {
-  const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    { load: async () => undefined },
-    undefined,
-    undefined,
-    { searchRelevant: async () => { throw new Error("temporary backend failure"); } },
-  );
-  const context = await builder.build({ botId: "ao", userId: "u", threadId: "t", currentContext: "共有した記事の内容を教えて？", kind: "human" });
-  expect(context).not.toContain("Relevant saved articles could not be checked");
-});
-
-test("includes proactive evidence only for proactive requests", async () => {
-  const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    { load: async () => undefined },
     () => new Date("2026-09-01T00:00:00.000Z"),
   );
-  const base = {
-    botId: "ao",
-    userId: "discord-1",
-    threadId: "thread-1",
-    currentContext: "hello",
-    proactiveEvidence: "internal proactive objective",
-  };
 
-  const human = await builder.build({ ...base, kind: "human" });
-  const conversation = await builder.build({ ...base, kind: "conversation" });
-  const proactive = await builder.build({ ...base, kind: "proactive" });
-
-  expect(human).not.toContain("internal proactive objective");
-  expect(conversation).toContain("internal proactive objective");
-  expect(proactive).toContain("internal proactive objective");
+  await expect(builder.build(request)).resolves.toBe(
+    "# Request Context\nCurrent time: 2026-09-01T00:00:00.000Z\nInput origin: human",
+  );
 });
 
-test("does not add analysis-derived context", async () => {
+test("includes proactive evidence only for proactive input", async () => {
   const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    { load: async () => undefined },
     () => new Date("2026-09-01T00:00:00.000Z"),
   );
 
   const context = await builder.build({
-    botId: "ao",
-    userId: "discord-1",
-    threadId: "thread-1",
-    currentContext: "latest merged input",
-    kind: "human",
-  });
-
-  expect(context).not.toContain("Conversation Focus");
-});
-
-test("does not add a Conversation Focus section", async () => {
-  const builder = new RequestContextBuilder(
-    userMemoryStore,
-    dailyEventRepository,
-    { load: async () => undefined },
-    () => new Date("2026-09-01T00:00:00.000Z"),
-  );
-
-  const context = await builder.build({
-    botId: "ao",
-    userId: "discord-1",
-    threadId: "thread-1",
-    currentContext: "latest input",
-    kind: "human",
-  });
-
-  expect(context).not.toContain("Conversation Focus");
-});
-
-test("omits prefetched memory and keeps time, origin, and proactive metadata", async () => {
-  const builder = new RequestContextBuilder(
-    { searchUserNotes: async () => { throw new Error("must not prefetch user memory"); } },
-    { searchDailyEvents: async () => { throw new Error("must not prefetch daily events"); } },
-    { load: async () => { throw new Error("must not prefetch policies"); } },
-    () => new Date("2026-09-09T00:00:00.000Z"),
-  );
-
-  const context = await builder.build({
-    botId: "ao",
-    userId: "user-1",
-    threadId: "thread-1",
-    currentContext: "remember the earlier topic",
+    ...request,
     kind: "proactive",
-    proactiveEvidence: "follow up on the saved plan",
+    proactiveEvidence: "continue the saved topic",
   });
 
-  expect(context).toContain("Current time: 2026-09-09T00:00:00.000Z");
   expect(context).toContain("Input origin: proactive");
-  expect(context).toContain("follow up on the saved plan");
-  expect(context).not.toMatch(/Shared UserMemory|Shared DailyEvent|PolicyCard|Shared Articles/);
+  expect(context).toContain("## Proactive Internal Context");
+  expect(context).toContain("continue the saved topic");
+});
+
+test("does not prefetch memory or policy context", async () => {
+  const builder = new RequestContextBuilder(
+    () => new Date("2026-09-01T00:00:00.000Z"),
+  );
+
+  const context = await builder.build(request);
+
+  expect(context).not.toContain("UserMemory");
+  expect(context).not.toContain("PolicyCard");
+  expect(context).not.toContain("DailyEvent");
 });

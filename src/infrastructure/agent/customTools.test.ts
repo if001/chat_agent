@@ -100,6 +100,7 @@ class MemoryStoreStub {
   public readonly replacedIds: number[] = [];
   public readonly deletedIds: number[] = [];
   public readonly searchRequests: unknown[] = [];
+  public remembered: DailyEvent | null = null;
 
   async inspectCatalog(input: { botId: string; threadId: string; userId: string }) {
     return {
@@ -116,6 +117,7 @@ class MemoryStoreStub {
     threadId: string;
     userId: string;
     scopes: string[];
+    query?: string;
   }) {
     this.searchRequests.push(input);
     return {
@@ -128,6 +130,26 @@ class MemoryStoreStub {
       ...(input.scopes.includes("policy_cards")
         ? { policyCards: { status: "not_found" as const } }
         : {}),
+      ...(input.scopes.includes("daily_events")
+        ? {
+            dailyEvents: {
+              status: "found" as const,
+              data: [
+                input.query
+                  ? {
+                      eventId: 1,
+                      eventDate: "2026-01-02",
+                      summary: "queue のテストを追加した",
+                    }
+                  : {
+                      eventId: 2,
+                      eventDate: "2026-01-03",
+                      summary: "Dockerfile を追加した",
+                    },
+              ],
+            },
+          }
+        : {}),
     };
   }
 
@@ -138,7 +160,7 @@ class MemoryStoreStub {
     return { ok: true, action: "create" as const, note: saved };
   }
 
-  async searchUserNotes() {
+  async findUserNotesForManagement() {
     return this.notes.length > 0
       ? this.notes
       : [{ id: 1, note: "prefer concise", createdAt: new Date("2026-01-01T00:00:00.000Z") }];
@@ -166,10 +188,6 @@ class MemoryStoreStub {
     }
     return true;
   }
-}
-
-class DailyEventClientStub {
-  public remembered: DailyEvent | null = null;
 
   async rememberDailyEvent(input: {
     userId: string;
@@ -189,41 +207,14 @@ class DailyEventClientStub {
     };
     return this.remembered;
   }
-
-  async searchDailyEvents(): Promise<DailyEvent[]> {
-    return [
-      {
-        id: 1,
-        userId: "u1",
-        eventDate: "2026-01-02",
-        summary: "queue のテストを追加した",
-        tags: ["queue", "test"],
-        createdAt: new Date("2026-01-02T00:00:00.000Z"),
-      },
-    ];
-  }
-
-  async getDailyEventsByDate(): Promise<DailyEvent[]> {
-    return [
-      {
-        id: 2,
-        userId: "u1",
-        eventDate: "2026-01-03",
-        summary: "Dockerfile を追加した",
-        tags: ["docker"],
-        createdAt: new Date("2026-01-03T00:00:00.000Z"),
-      },
-    ];
-  }
 }
 
 const createDeps = () => {
-  const userMemoryClient = new MemoryStoreStub();
+  const memoryClient = new MemoryStoreStub();
   return {
     knowledgeAccessService: new KnowledgeAccessServiceStub(),
-    userMemoryClient,
-    userMemoryStore: userMemoryClient,
-    dailyEventClient: new DailyEventClientStub(),
+    memoryClient,
+    userMemoryStore: memoryClient,
     botId: "b1",
     runtimeContext: {
       current: () => ({ botId: "b1", userId: "u1", threadId: "c1:u1" }),
@@ -469,7 +460,7 @@ test("explicit replacement returns the memory-system not-found result", async ()
 
 test("remember_daily_event stores concise daily record", async () => {
   const deps = createDeps();
-  const dailyEvents = deps.dailyEventClient as DailyEventClientStub;
+  const dailyEvents = deps.memoryClient as MemoryStoreStub;
   const tools = createCustomTools(deps);
 
   const result = await findTool(tools, "remember_daily_event").invoke({
@@ -560,8 +551,12 @@ test("get_daily_events_by_date returns nearby records", async () => {
   const tools = createCustomTools(createDeps());
 
   const result = await findTool(tools, "get_daily_events_by_date").invoke({ date: "2026-01-03", windowDays: 1 });
-  const parsed = JSON.parse(result as string) as DailyEvent[];
-  expect(parsed[0]?.summary).toContain("Dockerfile");
+  const parsed = JSON.parse(result as string) as {
+    status: string;
+    data: Array<{ summary: string }>;
+  };
+  expect(parsed.status).toBe("found");
+  expect(parsed.data[0]?.summary).toContain("Dockerfile");
 });
 
 test("enqueue_task returns queue created message", async () => {

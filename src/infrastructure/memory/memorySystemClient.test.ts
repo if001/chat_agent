@@ -25,59 +25,6 @@ test("formats policy context with explicit applicability and behaviors", () => {
   expect(prompt).not.toContain("episodeIds");
 });
 
-test("routes PolicyCard lookup through unified memory search", async () => {
-  const calls: unknown[] = [];
-  const client = createMemorySystemClient(
-    {
-      postgresUrl: "postgres://example.invalid",
-      ollamaBaseUrl: "http://ollama.invalid",
-      ollamaModel: "stub",
-    },
-    () => ({
-      ingestTurnRecord: async () => {},
-      search: async (input) => {
-        calls.push(input);
-        return {
-          policyCards: {
-            status: "found",
-            data: [
-              {
-                policyCardId: "pc-1",
-                appliesWhen: "User compares options.",
-                recommendedBehavior: "Compare constraints.",
-              },
-            ],
-          },
-        };
-      },
-      rememberUserNote: async () => ({ ok: true }),
-      searchUserNotes: async () => [],
-      replaceUserNote: async () => ({ ok: true }),
-      deleteUserNote: async () => true,
-    }),
-  );
-
-  const cards = await client.searchPolicyCards({
-    botId: "ao",
-    threadId: "thread-1",
-    userId: "user-1",
-    query: "deployment strategy",
-    limit: 2,
-  });
-
-  expect(cards).toHaveLength(1);
-  expect(calls).toEqual([
-    {
-      botId: "ao",
-      threadId: "thread-1",
-      userId: "user-1",
-      query: "deployment strategy",
-      scopes: ["policy_cards"],
-      limits: { policy_cards: 2 },
-    },
-  ]);
-});
-
 test("routes UserMemory operations through the memory-system service", async () => {
   const calls: unknown[] = [];
   const client = createMemorySystemClient(
@@ -93,7 +40,7 @@ test("routes UserMemory operations through the memory-system service", async () 
         calls.push(input);
         return { ok: true, action: "create" };
       },
-      searchUserNotes: async (input) => {
+      findUserNotesForManagement: async (input) => {
         calls.push(input);
         return [];
       },
@@ -109,7 +56,7 @@ test("routes UserMemory operations through the memory-system service", async () 
   );
 
   await client.rememberUserNote("shared-user", "Prefer concise answers");
-  await client.searchUserNotes("shared-user", "concise", 5);
+  await client.findUserNotesForManagement("shared-user", "concise", 5);
   await client.replaceUserNote("shared-user", 7, "Prefer detailed answers");
   await client.deleteUserNote("shared-user", 7);
 
@@ -121,7 +68,7 @@ test("routes UserMemory operations through the memory-system service", async () 
   ]);
 });
 
-test("routes DailyEvent operations through the memory-system service", async () => {
+test("routes DailyEvent writes directly and reads through unified search", async () => {
   const calls: unknown[] = [];
   const client = createMemorySystemClient(
     {
@@ -133,7 +80,7 @@ test("routes DailyEvent operations through the memory-system service", async () 
       ingestTurnRecord: async () => {},
       queryApplicablePolicyCards: async () => [],
       rememberUserNote: async () => ({ ok: true }),
-      searchUserNotes: async () => [],
+      findUserNotesForManagement: async () => [],
       replaceUserNote: async () => ({ ok: true }),
       deleteUserNote: async () => true,
       rememberDailyEvent: async (input) => {
@@ -147,13 +94,9 @@ test("routes DailyEvent operations through the memory-system service", async () 
           createdAt: new Date("2026-09-09T00:00:00.000Z"),
         };
       },
-      searchDailyEvents: async (input) => {
+      search: async (input) => {
         calls.push(input);
-        return [];
-      },
-      getDailyEventsByDate: async (input) => {
-        calls.push(input);
-        return [];
+        return { dailyEvents: { status: "not_found" as const } };
       },
     }),
   );
@@ -163,15 +106,15 @@ test("routes DailyEvent operations through the memory-system service", async () 
     eventDate: "2026-09-09",
     summary: "queue tests completed",
   });
-  await client.searchDailyEvents({
+  await client.searchMemory({
+    botId: "ao",
+    threadId: "thread-1",
     userId: "shared-user",
     query: "queue",
-    from: "2026-09-01",
-    to: "2026-09-30",
-  });
-  await client.getDailyEventsByDate({
-    userId: "shared-user",
-    date: "2026-09-09",
+    scopes: ["daily_events"],
+    filters: {
+      dailyEvents: { from: "2026-09-01", to: "2026-09-30" },
+    },
   });
 
   expect(calls).toEqual([
@@ -181,12 +124,15 @@ test("routes DailyEvent operations through the memory-system service", async () 
       summary: "queue tests completed",
     },
     {
+      botId: "ao",
+      threadId: "thread-1",
       userId: "shared-user",
       query: "queue",
-      from: "2026-09-01",
-      to: "2026-09-30",
+      scopes: ["daily_events"],
+      filters: {
+        dailyEvents: { from: "2026-09-01", to: "2026-09-30" },
+      },
     },
-    { userId: "shared-user", date: "2026-09-09" },
   ]);
 });
 

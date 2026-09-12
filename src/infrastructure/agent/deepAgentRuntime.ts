@@ -3,6 +3,7 @@ import {
   BaseCheckpointSaver,
   BaseStore,
 } from "@langchain/langgraph-checkpoint";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { AgentRuntimeContext } from "./runtimeContext";
 
 interface DeepAgentInvoker {
@@ -20,6 +21,7 @@ interface DeepAgentInvoker {
       configurable: { thread_id: string };
       context?: { trigger: { tokens: number } };
       recursionLimit?: number;
+      callbacks?: BaseCallbackHandler[];
     },
   ): Promise<{ messages?: unknown[] }>;
 }
@@ -56,6 +58,8 @@ export class DeepAgentRuntime implements AgentRuntime {
           ...request.messages,
         ]
       : request.messages;
+    console.log("[respond]: messages", messages);
+
     const result = await this.runtimeContext.run(
       {
         botId: request.botId,
@@ -71,7 +75,8 @@ export class DeepAgentRuntime implements AgentRuntime {
             // instance so the interaction-aware middleware is the sole owner.
             context: { trigger: { tokens: Number.MAX_SAFE_INTEGER } },
             // Bound model/tool cycles so failed retrieval cannot loop indefinitely.
-            recursionLimit: 12,
+            recursionLimit: 30,
+            callbacks: [createToolLoggingCallback()],
           },
         ),
     );
@@ -100,6 +105,56 @@ export class DeepAgentRuntime implements AgentRuntime {
     return agent;
   }
 }
+
+const createToolLoggingCallback = (): BaseCallbackHandler => {
+  const toolNamesByRunId = new Map<string, string>();
+
+  return BaseCallbackHandler.fromMethods({
+    handleToolStart(
+      tool,
+      input,
+      runId,
+      _parentRunId,
+      _tags,
+      _metadata,
+      runName,
+    ) {
+      const toolName = runName ?? getSerializedToolName(tool);
+      toolNamesByRunId.set(runId, toolName);
+      console.info("[agent-tool:start]", {
+        tool: toolName,
+        arguments: input,
+        runId,
+      });
+    },
+    handleToolEnd(output, runId) {
+      console.info("[agent-tool:end]", {
+        tool: toolNamesByRunId.get(runId) ?? "unknown",
+        output,
+        runId,
+      });
+      toolNamesByRunId.delete(runId);
+    },
+    handleToolError(error, runId) {
+      console.error("[agent-tool:error]", {
+        tool: toolNamesByRunId.get(runId) ?? "unknown",
+        error,
+        runId,
+      });
+      toolNamesByRunId.delete(runId);
+    },
+  });
+};
+
+const getSerializedToolName = (tool: unknown): string => {
+  if (typeof tool === "object" && tool !== null && "name" in tool) {
+    const name = (tool as { name?: unknown }).name;
+    if (typeof name === "string") {
+      return name;
+    }
+  }
+  return "unknown";
+};
 
 const stringifyMessageContent = (content: unknown): string => {
   if (typeof content === "string") {

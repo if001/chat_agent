@@ -89,7 +89,7 @@ export const loadEnv = (): AppEnv => ({
   ollamaChatModel: required("OLLAMA_CHAT_MODEL"),
   ollamaEmbeddingModel: required("OLLAMA_EMBEDDING_MODEL"),
   ollamaEmbeddingDimension: Number(
-    process.env.OLLAMA_EMBEDDING_DIMENSION ?? "1024",
+    process.env.OLLAMA_EMBEDDING_DIMENSION ?? "768",
   ),
   deepAgentSkillsSources: (
     process.env.DEEPAGENT_SKILLS_SOURCES ?? "/src/skills/"

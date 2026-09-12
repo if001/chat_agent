@@ -1,5 +1,5 @@
 import { createQueueApi, FileQueueStore } from "@chat-agent/queue";
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -8,6 +8,9 @@ const createPath = () =>
     tmpdir(),
     `queue_test_${Date.now()}_${Math.floor(Math.random() * 1000)}.json`,
   );
+
+const errorPathFor = (path: string): string =>
+  `${path.slice(0, -".json".length)}.errors.json`;
 
 test("dequeue prioritizes user over scheduled tasks", async () => {
   const path = createPath();
@@ -196,8 +199,9 @@ test("deduplicates one proactive interaction across queue instances", async () =
   await rm(path, { force: true });
 });
 
-test("persists a final failure after three handler releases", async () => {
+test("moves a final failure out of the active queue after three handler releases", async () => {
   const path = createPath();
+  const errorPath = errorPathFor(path);
   const queue = createQueueApi(new FileQueueStore(path));
   const now = new Date();
   await queue.enqueueScheduledInput({ botId: "ao", userId: "u1", channelId: "c1", text: "fail", dueAt: now });
@@ -205,10 +209,89 @@ test("persists a final failure after three handler releases", async () => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const task = await queue.dequeueReady(new Date(now.getTime() + 60_000));
     expect(task).not.toBeNull();
-    await queue.release(task!.id, now, `failure-${attempt + 1}`);
+    await queue.release(task!.id, now, {
+      name: "TestError",
+      message: `failure-${attempt + 1}`,
+    });
   }
 
   expect(await queue.dequeueReady(new Date(now.getTime() + 60_000))).toBeNull();
-  expect((await queue.getStatus(now)).counts.total).toBe(1);
+  expect((await queue.getStatus(now)).counts.total).toBe(0);
+  const errorState = JSON.parse(await readFile(errorPath, "utf8")) as {
+    errors: Array<Record<string, unknown>>;
+  };
+  expect(errorState.errors).toEqual([
+    expect.objectContaining({
+      type: "scheduled_once",
+      action: "agent_input",
+      source: "scheduled",
+      targetThreadId: "c1:u1",
+      attempts: 3,
+      error: { name: "TestError", message: "failure-3" },
+    }),
+  ]);
+  expect(errorState.errors[0]).not.toHaveProperty("text");
   await rm(path, { force: true });
+  await rm(errorPath, { force: true });
+});
+
+test("archives a legacy failed mention and creates a fresh task for new input", async () => {
+  const path = createPath();
+  const errorPath = errorPathFor(path);
+  const now = new Date();
+  await writeFile(
+    path,
+    JSON.stringify({
+      tasks: [
+        {
+          id: "failed-mention",
+          type: "user",
+          action: "mention",
+          text: "old input",
+          channelId: "c1",
+          userId: "u1",
+          authorId: "u1",
+          mentionsBot: true,
+          targetThreadId: "c1:u1",
+          source: "user",
+          dueAt: now.toISOString(),
+          conversationVersion: 1,
+          createdAt: now.toISOString(),
+          locked: false,
+          attempts: 3,
+          lastError: "handler failed",
+          failedAt: now.toISOString(),
+        },
+      ],
+      conversationVersions: { "c1:u1": 1 },
+    }),
+    "utf8",
+  );
+
+  const queue = createQueueApi(new FileQueueStore(path));
+  const fresh = await queue.enqueueMention({
+    botId: "ao",
+    userId: "u1",
+    channelId: "c1",
+    text: "new input",
+    mentionsBot: true,
+    dueAt: now,
+  });
+
+  expect(fresh.id).not.toBe("failed-mention");
+  expect(fresh.text).toBe("new input");
+  expect((await queue.getStatus(now)).counts.total).toBe(1);
+  expect((await queue.getStatus(now)).counts.readyByType.user).toBe(1);
+  const errorState = JSON.parse(await readFile(errorPath, "utf8")) as {
+    errors: Array<Record<string, unknown>>;
+  };
+  expect(errorState.errors).toEqual([
+    expect.objectContaining({
+      taskId: "failed-mention",
+      error: { name: "Error", message: "handler failed" },
+    }),
+  ]);
+
+  await rm(path, { force: true });
+  await rm(errorPath, { force: true });
 });

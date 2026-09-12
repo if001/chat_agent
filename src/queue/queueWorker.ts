@@ -56,12 +56,11 @@ export class QueueWorker {
         try {
           await this.handler(task);
         } catch (error: unknown) {
-          const message =
-            error instanceof Error ? (error.stack ?? error.message) : String(error);
+          const queueError = toQueueError(error);
           process.stdout.write(
-            `[queue-handler-error] taskId=${task.id} action=${task.action} ${message}\n`,
+            `[queue-handler-error] taskId=${task.id} action=${task.action} ${queueError.name}: ${queueError.message}\n`,
           );
-          await this.queue.release(task.id, undefined, "handler failed");
+          await this.queue.release(task.id, undefined, queueError);
           process.stdout.write(
             `[DEBUG-pomdp-queue] released taskId=${task.id} reason=handler_failed\n`,
           );
@@ -91,3 +90,8 @@ export class QueueWorker {
     }
   }
 }
+
+const toQueueError = (error: unknown): { name: string; message: string } =>
+  error instanceof Error
+    ? { name: error.name || "Error", message: error.message }
+    : { name: "Error", message: String(error) };
